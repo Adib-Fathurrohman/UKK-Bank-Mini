@@ -1,0 +1,35 @@
+<?php
+
+use App\Enums\AccountCode;
+use App\Enums\Position;
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::create('accounting_journals', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('transaction_id')->constrained('transactions')->onDelete('restrict');
+            $table->enum('account_code', array_column(AccountCode::cases(), 'value'));
+            $table->enum('position', array_column(Position::cases(), 'value'));
+            $table->integer('amount')->unsigned();
+            $table->timestamps();
+        });
+        DB::statement('ALTER TABLE accounting_journals ADD CONSTRAINT chk_position CHECK (position IN ("debit", "credit"))');
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        DB::statement('ALTER TABLE accounting_journals DROP CONSTRAINT chk_position');
+        Schema::dropIfExists('accounting_journals');
+    }
+};
