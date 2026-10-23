@@ -4,12 +4,23 @@ namespace App\Models;
 
 use App\Enums\AccountStatus;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Laravel\Sanctum\HasApiTokens;
 
-class Customer extends Model
+class Customer extends Authenticatable
 {
-    use HasFactory, SoftDeletes;
+    use HasApiTokens, HasFactory, SoftDeletes;
+
+    /**
+     * Customers authenticate with a 6-digit PIN instead of a password.
+     */
+    protected $authPasswordName = 'pin';
+
+    /**
+     * Customers only use API tokens, so there is no remember_token column.
+     */
+    protected $rememberTokenName = '';
 
     protected $fillable = [
         'account_number',
@@ -31,6 +42,7 @@ class Customer extends Model
     {
         return [
             'account_status' => AccountStatus::class,
+            'pin' => 'hashed',
             'balance' => 'integer',
         ];
     }
@@ -45,4 +57,3 @@ class Customer extends Model
         return $this->hasMany(Transaction::class);
     }
 }
-

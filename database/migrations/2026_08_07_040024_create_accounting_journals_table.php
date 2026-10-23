@@ -4,6 +4,7 @@ use App\Enums\AccountCode;
 use App\Enums\Position;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -20,8 +21,13 @@ return new class extends Migration
             $table->enum('position', array_column(Position::cases(), 'value'));
             $table->integer('amount')->unsigned();
             $table->timestamps();
+
+            // At most one debit and one credit line per transaction.
+            $table->unique(['transaction_id', 'position']);
+            $table->index('account_code');
         });
         DB::statement('ALTER TABLE accounting_journals ADD CONSTRAINT chk_position CHECK (position IN ("debit", "credit"))');
+        DB::statement('ALTER TABLE accounting_journals ADD CONSTRAINT chk_journals_amount CHECK (amount > 0)');
     }
 
     /**
@@ -29,7 +35,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        DB::statement('ALTER TABLE accounting_journals DROP CONSTRAINT chk_position');
         Schema::dropIfExists('accounting_journals');
     }
 };

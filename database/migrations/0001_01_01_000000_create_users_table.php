@@ -18,6 +18,8 @@ return new class extends Migration
             $table->string('password');
             $table->string('full_name');
             $table->enum('role', array_column(UserRoles::cases(),'value'));
+            // Staff are deactivated instead of deleted: transactions reference them with ON DELETE RESTRICT.
+            $table->boolean('is_active')->default(true);
             $table->rememberToken();
             $table->timestamps();
         });
