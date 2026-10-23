@@ -94,6 +94,9 @@ akun dan IP.
 
 ## Endpoint
 
+Dokumentasi lengkap setiap endpoint (parameter, aturan validasi, contoh respons,
+dan kode error) ada di [docs/API.md](docs/API.md).
+
 | Aktor | Method & URL | Keterangan |
 | --- | --- | --- |
 | Staf | `GET /api/staff/me`, `POST /api/staff/logout` | Profil dan logout |
