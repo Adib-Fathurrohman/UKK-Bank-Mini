@@ -64,12 +64,20 @@ php artisan test
 ```
 
 Test memakai SQLite in-memory (lihat `phpunit.xml`). Untuk memastikan constraint
-`CHECK` dan row lock juga berjalan di MariaDB, buat database `ukk_laravel_test`
-lalu jalankan:
+`CHECK` dan row lock juga berjalan di MariaDB, jalankan test pada database
+terpisah (jangan `ukk_laravel`, karena isinya dihapus setiap test). Instalasi
+MariaDB bawaan mengizinkan setiap user membuat database berawalan `test_`:
 
 ```bash
-DB_CONNECTION=mariadb DB_DATABASE=ukk_laravel_test php artisan test
+mariadb -u bank-db-user -p -e "CREATE DATABASE IF NOT EXISTS test_bank_mini"
 ```
+
+```bash
+DB_CONNECTION=mariadb DB_DATABASE=test_bank_mini php artisan test
+```
+
+Jika user database tidak memiliki izin tersebut, berikan dulu sebagai root:
+`GRANT ALL PRIVILEGES ON test_bank_mini.* TO 'bank-db-user'@'localhost';`
 
 ## Autentikasi
 
