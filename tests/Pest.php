@@ -1,6 +1,10 @@
 <?php
 
+use App\Enums\UserRoles;
+use App\Models\Customer;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
 /*
@@ -44,7 +48,26 @@ expect()->extend('toBeOne', function () {
 |
 */
 
-function something()
+/**
+ * Authenticate the next requests as a staff member with the given role.
+ */
+function actingAsStaff(UserRoles $role = UserRoles::TELLER, array $attributes = []): User
 {
-    // ..
+    $user = User::factory()->create(['role' => $role, ...$attributes]);
+
+    Sanctum::actingAs($user);
+
+    return $user;
+}
+
+/**
+ * Authenticate the next requests as a customer (student).
+ */
+function actingAsCustomer(array $attributes = []): Customer
+{
+    $customer = Customer::factory()->create($attributes);
+
+    Sanctum::actingAs($customer);
+
+    return $customer;
 }
