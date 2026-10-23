@@ -4,6 +4,7 @@ use App\Http\Controllers\API\Admin\CustomerController;
 use App\Http\Controllers\API\Admin\StaffController;
 use App\Http\Controllers\API\Audit\JournalController;
 use App\Http\Controllers\API\Audit\TransactionController as AuditTransactionController;
+use App\Http\Controllers\API\Customer\AccountController as CustomerAccountController;
 use App\Http\Controllers\API\Customer\AuthController as CustomerAuthController;
 use App\Http\Controllers\API\MajorController;
 use App\Http\Controllers\API\Staff\AuthController as StaffAuthController;
@@ -93,4 +94,8 @@ Route::post('customer/login', [CustomerAuthController::class, 'login'])->middlew
 Route::middleware(['auth:sanctum', 'customer'])->prefix('customer')->group(function () {
     Route::get('me', [CustomerAuthController::class, 'me']);
     Route::post('logout', [CustomerAuthController::class, 'logout']);
+
+    Route::get('balance', [CustomerAccountController::class, 'balance']);
+    Route::get('transactions', [CustomerAccountController::class, 'transactions']);
+    Route::get('transactions/{transaction}', [CustomerAccountController::class, 'transaction'])->whereNumber('transaction');
 });
