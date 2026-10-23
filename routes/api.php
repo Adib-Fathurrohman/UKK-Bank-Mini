@@ -7,7 +7,9 @@ use App\Http\Controllers\API\Audit\TransactionController as AuditTransactionCont
 use App\Http\Controllers\API\Customer\AuthController as CustomerAuthController;
 use App\Http\Controllers\API\MajorController;
 use App\Http\Controllers\API\Staff\AuthController as StaffAuthController;
+use App\Http\Controllers\API\Supervisor\DailyReportController as SupervisorDailyReportController;
 use App\Http\Controllers\API\Teller\CustomerLookupController;
+use App\Http\Controllers\API\Teller\DailyReportController as TellerDailyReportController;
 use App\Http\Controllers\API\Teller\TransactionController as TellerTransactionController;
 use Illuminate\Support\Facades\Route;
 
@@ -53,6 +55,19 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
         Route::get('transactions', [TellerTransactionController::class, 'index']);
         Route::post('deposits', [TellerTransactionController::class, 'deposit']);
         Route::post('withdrawals', [TellerTransactionController::class, 'withdraw']);
+
+        Route::get('daily-reports/preview', [TellerDailyReportController::class, 'preview']);
+        Route::get('daily-reports', [TellerDailyReportController::class, 'index']);
+        Route::post('daily-reports', [TellerDailyReportController::class, 'store']);
+        Route::get('daily-reports/{dailyReport}', [TellerDailyReportController::class, 'show']);
+    });
+
+    // Supervisor only
+    Route::middleware('staff:supervisor')->prefix('supervisor')->name('supervisor.')->group(function () {
+        Route::get('daily-reports', [SupervisorDailyReportController::class, 'index']);
+        Route::get('daily-reports/{dailyReport}', [SupervisorDailyReportController::class, 'show']);
+        Route::post('daily-reports/{dailyReport}/approve', [SupervisorDailyReportController::class, 'approve'])->name('daily-reports.approve');
+        Route::post('daily-reports/{dailyReport}/reject', [SupervisorDailyReportController::class, 'reject'])->name('daily-reports.reject');
     });
 });
 

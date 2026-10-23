@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Enums\AccountStatus;
 use App\Enums\TransactionTypes;
 use App\Exceptions\AccountNotActiveException;
+use App\Exceptions\CounterClosedException;
 use App\Exceptions\InsufficientBalanceException;
 use App\Models\Customer;
 use App\Models\Transaction;
@@ -20,8 +21,10 @@ use InvalidArgumentException;
  */
 class TransactionService
 {
-    public function __construct(private JournalService $journals)
-    {
+    public function __construct(
+        private JournalService $journals,
+        private DailyReportService $reports,
+    ) {
     }
 
     public function deposit(Customer $customer, int $amount, User $teller): Transaction
@@ -41,6 +44,14 @@ class TransactionService
         }
 
         return DB::transaction(function () use ($type, $customer, $amount, $teller) {
+            // Locks are always taken teller first, then customer, to avoid deadlocks.
+            // The teller lock serializes this with closing the counter (DailyReportService::submit).
+            User::whereKey($teller->id)->lockForUpdate()->first();
+
+            if ($this->reports->isCounterClosed($teller, now())) {
+                throw new CounterClosedException();
+            }
+
             // Re-read the balance under a row lock so two tellers serving the same
             // customer at once cannot both start from the same old balance.
             $customer = Customer::whereKey($customer->getKey())->lockForUpdate()->firstOrFail();
