@@ -10,6 +10,10 @@ use Illuminate\Database\Eloquent\Model;
  */
 class CashTransfer extends Model
 {
+    protected $attributes = [
+        'status' => 'pending',
+    ];
+
     protected $fillable = [
         'teller_id',
         'amount',

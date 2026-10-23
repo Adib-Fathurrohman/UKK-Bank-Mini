@@ -7,6 +7,10 @@ use Illuminate\Database\Eloquent\Model;
 
 class DailyReport extends Model
 {
+    protected $attributes = [
+        'status' => 'draft',
+    ];
+
     protected $fillable = [
         'teller_id',
         'report_date',

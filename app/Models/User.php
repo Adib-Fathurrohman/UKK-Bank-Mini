@@ -19,6 +19,13 @@ class User extends Authenticatable
     use HasApiTokens, HasFactory, Notifiable;
 
     /**
+     * Mirror the column defaults so new models have them before a refresh.
+     */
+    protected $attributes = [
+        'is_active' => true,
+    ];
+
+    /**
      * Get the attributes that should be cast.
      *
      * @return array<string, string>
