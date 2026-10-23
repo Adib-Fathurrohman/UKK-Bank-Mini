@@ -1,58 +1,132 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# E-Teller Bank Mini Sekolah
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Backend API untuk sistem perbankan internal sekolah (proyek UKK): setor dan tarik
+tunai siswa, jurnal akuntansi entri ganda, laporan harian teller dengan approval
+supervisor, dan pemindahan kas ke brankas. Spesifikasi lengkap ada di
+[PRD.md](PRD.md); urutan pengerjaan di [RENCANA_PENGEMBANGAN.md](RENCANA_PENGEMBANGAN.md).
 
-## About Laravel
+**Teknologi:** Laravel 13 (PHP 8.3+), MariaDB, Laravel Sanctum (token API), Pest.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
-
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
-
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
-
-## Learning Laravel
-
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
-
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
-
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+## Instalasi
 
 ```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+composer install
+cp .env.example .env
+php artisan key:generate
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+Buat database dan user MariaDB, lalu sesuaikan `.env`:
 
-## Contributing
+```sql
+CREATE DATABASE ukk_laravel;
+CREATE USER 'bank-db-user'@'localhost' IDENTIFIED BY 'ganti-password';
+GRANT ALL PRIVILEGES ON ukk_laravel.* TO 'bank-db-user'@'localhost';
+```
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+```dotenv
+DB_CONNECTION=mariadb
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=ukk_laravel
+DB_USERNAME=bank-db-user
+DB_PASSWORD=ganti-password
 
-## Code of Conduct
+APP_TIMEZONE=Asia/Jakarta
+BANK_MIN_BALANCE=10000     # saldo minimum setelah penarikan (Rupiah)
+SANCTUM_EXPIRATION=480     # masa berlaku token dalam menit
+```
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+Jalankan migration, seeder, dan server:
 
-## Security Vulnerabilities
+```bash
+php artisan migrate:fresh --seed
+php artisan serve
+```
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+Seeder aman dijalankan ulang. Saldo awal nasabah demo dibuat lewat transaksi
+setor sungguhan, sehingga saldo, mutasi, dan jurnal selalu konsisten.
 
-## License
+## Akun demo
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+| Aktor | Login | Password / PIN |
+| --- | --- | --- |
+| Administrator | `admin` | `password` |
+| Supervisor | `supervisor` | `password` |
+| Teller | `teller` | `password` |
+| Nasabah | NIS `20260001`–`20260003` atau rekening `1000000001`–`1000000003` | PIN `123456` |
+
+Ganti semua password dan PIN demo sebelum dipakai di luar lingkungan ujian.
+
+## Pengujian
+
+```bash
+php artisan test
+```
+
+Test memakai SQLite in-memory (lihat `phpunit.xml`). Untuk memastikan constraint
+`CHECK` dan row lock juga berjalan di MariaDB, buat database `ukk_laravel_test`
+lalu jalankan:
+
+```bash
+DB_CONNECTION=mariadb DB_DATABASE=ukk_laravel_test php artisan test
+```
+
+## Autentikasi
+
+Semua endpoint (kecuali login) membutuhkan header `Authorization: Bearer <token>`
+dan `Accept: application/json`.
+
+```http
+POST /api/staff/login      { "username": "teller", "password": "password" }
+POST /api/customer/login   { "identifier": "20260001", "pin": "123456" }
+```
+
+Respons login berisi `data.token`. Login dibatasi 5 percobaan per menit per
+akun dan IP.
+
+## Endpoint
+
+| Aktor | Method & URL | Keterangan |
+| --- | --- | --- |
+| Staf | `GET /api/staff/me`, `POST /api/staff/logout` | Profil dan logout |
+| Staf | `GET /api/majors` | Daftar jurusan |
+| Admin | `GET/POST /api/admin/staff`, `GET/PATCH/DELETE /api/admin/staff/{id}` | Kelola teller & supervisor. `DELETE` menonaktifkan akun |
+| Admin | `POST /api/admin/customers`, `PATCH /api/admin/customers/{id}` | Buka rekening (nomor dibuat sistem), ubah data/status/PIN |
+| Admin | `POST /api/admin/customers/{id}/deactivate` | Kelulusan: status `inactive` + soft delete |
+| Admin, Supervisor | `GET /api/customers`, `GET /api/customers/{id}` | Daftar rekening (`search`, `major_id`, `class`, `status`, `trashed=with\|only`) |
+| Admin, Supervisor | `GET /api/audit/transactions`, `GET /api/audit/transactions/{id}` | Log transaksi beserta jurnal (read-only) |
+| Admin, Supervisor | `GET /api/audit/journals`, `GET /api/audit/journals/summary` | Jurnal akuntansi dan neraca saldo (read-only) |
+| Teller | `GET /api/teller/customers/lookup?identifier=` | Cari nasabah via nomor rekening/NIS |
+| Teller | `POST /api/teller/deposits`, `POST /api/teller/withdrawals` | `{ "account_number", "amount" }` |
+| Teller | `GET /api/teller/transactions?date=` | Transaksi milik teller per hari |
+| Teller | `GET /api/teller/daily-reports/preview?date=` | Draf penutupan kas (untuk dicetak) |
+| Teller | `GET/POST /api/teller/daily-reports`, `GET /api/teller/daily-reports/{id}` | Kirim dan lihat laporan harian |
+| Teller | `GET /api/teller/drawer`, `GET/POST /api/teller/cash-transfers` | Kas di laci dan pengajuan pemindahan ke brankas |
+| Supervisor | `GET /api/supervisor/daily-reports`, `GET .../{id}`, `POST .../{id}/approve\|reject` | Verifikasi laporan harian |
+| Supervisor | `GET /api/supervisor/cash-transfers`, `GET .../{id}`, `POST .../{id}/approve\|reject` | Otorisasi pemindahan kas |
+| Nasabah | `GET /api/customer/me`, `GET /api/customer/balance` | Profil dan saldo |
+| Nasabah | `GET /api/customer/transactions`, `GET /api/customer/transactions/{id}` | Mutasi rekening (`from`, `to`, `type`) |
+
+Daftar menggunakan pagination (`?page=`, `?per_page=` maksimal 100). Role yang
+salah mendapat `403`, tanpa token `401`, pelanggaran aturan bisnis `422` dengan
+`message`.
+
+## Aturan bisnis utama
+
+- **Atomik:** ubah saldo, catat transaksi, dan dua baris jurnal berada dalam satu
+  `DB::transaction()` dengan row lock pada nasabah. Jika satu langkah gagal,
+  semuanya dibatalkan.
+- **Jurnal entri ganda:** setor = Debit 101 Kas / Kredit 201 Tabungan Nasabah;
+  tarik = Debit 201 Tabungan Nasabah / Kredit 101 Kas.
+- **Saldo minimum:** penarikan ditolak jika sisa saldo di bawah `BANK_MIN_BALANCE`.
+- **Status rekening:** `active` dapat bertransaksi; `suspended` hanya dapat login
+  dan melihat saldo; `inactive` (lulus) tidak dapat login dan di-soft delete.
+- **Penutupan loket:** setelah teller mengirim laporan harian, teller tersebut
+  tidak dapat bertransaksi lagi pada tanggal itu kecuali laporan ditolak supervisor.
+- **Pemindahan kas:** jumlah tidak boleh melebihi kas di laci teller (setor −
+  tarik − pemindahan yang disetujui). Pemindahan kas tidak membuat jurnal karena
+  kas tetap berada di bank.
+- **Audit trail:** transaksi, jurnal, laporan yang disetujui, dan pemindahan kas
+  yang sudah diproses tidak dapat diubah atau dihapus. Foreign key memakai
+  `ON DELETE RESTRICT`, dan nominal dilindungi `CHECK (amount > 0)` di database.
+- Password staf dan PIN nasabah di-hash (bcrypt) dan tidak pernah muncul di respons API.

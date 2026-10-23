@@ -27,7 +27,7 @@ return new class extends Migration
             $table->index(['customer_id', 'created_at']);
             $table->index(['user_id', 'created_at']);
         });
-        DB::statement('ALTER TABLE transactions ADD CONSTRAINT chk_type CHECK (type IN ("deposit", "withdrawal"))');
+        DB::statement('ALTER TABLE transactions ADD CONSTRAINT chk_type CHECK (type IN (\'deposit\', \'withdrawal\'))');
         DB::statement('ALTER TABLE transactions ADD CONSTRAINT chk_transactions_amount CHECK (amount > 0)');
     }
 

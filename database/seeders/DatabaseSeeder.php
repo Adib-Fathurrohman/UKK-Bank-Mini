@@ -3,14 +3,19 @@
 namespace Database\Seeders;
 
 use App\Enums\AccountStatus;
+use App\Enums\UserRoles;
 use App\Models\Customer;
+use App\Models\Major;
+use App\Models\User;
+use App\Services\TransactionService;
 use Illuminate\Database\Seeder;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 
+/**
+ * Demo data for the UKK presentation. Safe to run more than once.
+ */
 class DatabaseSeeder extends Seeder
 {
-    public function run(): void
+    public function run(TransactionService $transactions): void
     {
         // =========================
         // MAJORS
@@ -28,17 +33,28 @@ class DatabaseSeeder extends Seeder
         ];
 
         foreach ($majors as $major) {
-            DB::table('majors')->updateOrInsert(
-                ['major_name' => $major],
-                [
-                    'major_name' => $major,
-                    'updated_at' => now(),
-                ]
+            Major::firstOrCreate(['major_name' => $major]);
+        }
+
+        // =========================
+        // STAFF (password: "password")
+        // =========================
+
+        $staff = [
+            ['username' => 'admin', 'full_name' => 'Administrator', 'role' => UserRoles::ADMIN],
+            ['username' => 'supervisor', 'full_name' => 'Supervisor Bank Mini', 'role' => UserRoles::SUPERVISOR],
+            ['username' => 'teller', 'full_name' => 'Teller Loket 1', 'role' => UserRoles::TELLER],
+        ];
+
+        foreach ($staff as $member) {
+            User::firstOrCreate(
+                ['username' => $member['username']],
+                [...$member, 'password' => 'password', 'is_active' => true],
             );
         }
 
         // =========================
-        // CUSTOMERS
+        // CUSTOMERS (PIN: "123456")
         // =========================
 
         $customers = [
@@ -47,52 +63,52 @@ class DatabaseSeeder extends Seeder
                 'nis' => '20260001',
                 'full_name' => 'Budi Santoso',
                 'class' => 'X',
-                'major_id' => 1,
+                'major' => 'Rekayasa Perangkat Lunak',
                 'group' => '1',
-                'account_status' => AccountStatus::ACTIVE->value,
-                'pin' => Hash::make('123456'),
-                'balance' => 500000,
+                'opening_balance' => 500000,
             ],
             [
                 'account_number' => '1000000002',
                 'nis' => '20260002',
                 'full_name' => 'Andi Pratama',
                 'class' => 'XI',
-                'major_id' => 2,
+                'major' => 'Desain Komunikasi Visual',
                 'group' => '2',
-                'account_status' => AccountStatus::ACTIVE->value,
-                'pin' => Hash::make('123456'),
-                'balance' => 750000,
+                'opening_balance' => 750000,
             ],
             [
                 'account_number' => '1000000003',
                 'nis' => '20260003',
                 'full_name' => 'Citra Lestari',
                 'class' => 'XII',
-                'major_id' => 1,
+                'major' => 'Rekayasa Perangkat Lunak',
                 'group' => '3',
-                'account_status' => AccountStatus::ACTIVE->value,
-                'pin' => Hash::make('123456'),
-                'balance' => 1000000,
+                'opening_balance' => 1000000,
             ],
         ];
 
-        foreach ($customers as $customer) {
-            Customer::updateOrCreate(
+        $teller = User::where('username', 'teller')->firstOrFail();
+
+        foreach ($customers as $data) {
+            $customer = Customer::withTrashed()->firstOrCreate(
+                ['account_number' => $data['account_number']],
                 [
-                    'account_number' => $customer['account_number'],
+                    'nis' => $data['nis'],
+                    'full_name' => $data['full_name'],
+                    'class' => $data['class'],
+                    'major_id' => Major::where('major_name', $data['major'])->value('id'),
+                    'group' => $data['group'],
+                    'account_status' => AccountStatus::ACTIVE,
+                    'pin' => '123456',
+                    'balance' => 0,
                 ],
-                [
-                    'nis' => $customer['nis'],
-                    'full_name' => $customer['full_name'],
-                    'class' => $customer['class'],
-                    'major_id' => $customer['major_id'],
-                    'group' => $customer['group'],
-                    'account_status' => $customer['account_status'],
-                    'pin' => $customer['pin'],
-                    'balance' => $customer['balance'],
-                ]
             );
+
+            // Opening balances go through a real teller deposit so the balance,
+            // the transaction history and the journal always agree.
+            if ($customer->wasRecentlyCreated) {
+                $transactions->deposit($customer, $data['opening_balance'], $teller);
+            }
         }
     }
 }

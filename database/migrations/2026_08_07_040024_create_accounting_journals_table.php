@@ -26,7 +26,7 @@ return new class extends Migration
             $table->unique(['transaction_id', 'position']);
             $table->index('account_code');
         });
-        DB::statement('ALTER TABLE accounting_journals ADD CONSTRAINT chk_position CHECK (position IN ("debit", "credit"))');
+        DB::statement('ALTER TABLE accounting_journals ADD CONSTRAINT chk_position CHECK (position IN (\'debit\', \'credit\'))');
         DB::statement('ALTER TABLE accounting_journals ADD CONSTRAINT chk_journals_amount CHECK (amount > 0)');
     }
 

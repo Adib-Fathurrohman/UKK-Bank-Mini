@@ -525,64 +525,64 @@ database bersih.
 
 ### Authentication
 
-- [ ] Staf login dengan username dan password.
-- [ ] Customer login dengan NIS atau nomor rekening dan PIN.
-- [ ] Token Sanctum dibuat dan divalidasi.
-- [ ] Logout mencabut token.
-- [ ] Password dan PIN tidak pernah dikirim dalam response.
+- [x] Staf login dengan username dan password.
+- [x] Customer login dengan NIS atau nomor rekening dan PIN.
+- [x] Token Sanctum dibuat dan divalidasi.
+- [x] Logout mencabut token.
+- [x] Password dan PIN tidak pernah dikirim dalam response.
 
 ### User management
 
-- [ ] Admin membuat staf.
-- [ ] Admin membaca staf aktif.
-- [ ] Admin mengubah staf.
-- [ ] Admin menonaktifkan akses staf.
+- [x] Admin membuat staf.
+- [x] Admin membaca staf aktif.
+- [x] Admin mengubah staf.
+- [x] Admin menonaktifkan akses staf.
 
 ### Account management
 
-- [ ] Admin membuat rekening.
-- [ ] Rekening terhubung ke major.
-- [ ] Admin dan Supervisor membaca rekening.
-- [ ] Customer lulus berstatus inactive.
-- [ ] Soft delete menjaga data historis.
+- [x] Admin membuat rekening.
+- [x] Rekening terhubung ke major.
+- [x] Admin dan Supervisor membaca rekening.
+- [x] Customer lulus berstatus inactive.
+- [x] Soft delete menjaga data historis.
 
 ### Transactions
 
-- [ ] Teller dapat setor.
-- [ ] Teller dapat tarik.
-- [ ] Penarikan di bawah Rp10.000 ditolak.
-- [ ] Transaksi hanya dapat dilakukan setelah autentikasi.
-- [ ] Teller dapat membuat laporan harian.
+- [x] Teller dapat setor.
+- [x] Teller dapat tarik.
+- [x] Penarikan di bawah Rp10.000 ditolak.
+- [x] Transaksi hanya dapat dilakukan setelah autentikasi.
+- [x] Teller dapat membuat laporan harian.
 
 ### Accounting
 
-- [ ] Satu transaksi menghasilkan tepat dua journal.
-- [ ] Journal memiliki posisi debit dan kredit.
-- [ ] Journal memiliki kode akun.
-- [ ] Admin dan Supervisor dapat membaca journal.
-- [ ] Journal tidak dapat diedit melalui endpoint biasa.
+- [x] Satu transaksi menghasilkan tepat dua journal.
+- [x] Journal memiliki posisi debit dan kredit.
+- [x] Journal memiliki kode akun.
+- [x] Admin dan Supervisor dapat membaca journal.
+- [x] Journal tidak dapat diedit melalui endpoint biasa.
 
 ### Supervisor
 
-- [ ] Supervisor dapat melihat laporan teller.
-- [ ] Supervisor dapat approve/reject laporan.
-- [ ] Supervisor dapat mengotorisasi pemindahan kas.
-- [ ] Approval menyimpan audit actor dan waktu.
+- [x] Supervisor dapat melihat laporan teller.
+- [x] Supervisor dapat approve/reject laporan.
+- [x] Supervisor dapat mengotorisasi pemindahan kas.
+- [x] Approval menyimpan audit actor dan waktu.
 
 ### Customer
 
-- [ ] Customer melihat saldo sendiri.
-- [ ] Customer melihat mutasi sendiri.
-- [ ] Customer tidak dapat melihat customer lain.
+- [x] Customer melihat saldo sendiri.
+- [x] Customer melihat mutasi sendiri.
+- [x] Customer tidak dapat melihat customer lain.
 
 ### Database and security
 
-- [ ] Foreign key historis memakai `restrict`.
-- [ ] Amount memiliki constraint positif.
-- [ ] Proses uang memakai database transaction.
-- [ ] Password dan PIN menggunakan hashing.
-- [ ] Middleware role melindungi route.
-- [ ] Test unit dan feature tersedia.
+- [x] Foreign key historis memakai `restrict`.
+- [x] Amount memiliki constraint positif.
+- [x] Proses uang memakai database transaction.
+- [x] Password dan PIN menggunakan hashing.
+- [x] Middleware role melindungi route.
+- [x] Test unit dan feature tersedia.
 
 ## 5. Definisi Selesai
 

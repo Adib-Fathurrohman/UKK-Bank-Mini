@@ -181,3 +181,11 @@ test('staff can list majors', function () {
 
     $this->getJson('/api/majors')->assertOk()->assertJsonCount(2, 'data');
 });
+
+test('missing records return a generic 404 without model details', function () {
+    actingAsStaff(UserRoles::SUPERVISOR);
+
+    $this->getJson('/api/customers/999999')
+        ->assertNotFound()
+        ->assertExactJson(['message' => 'Data tidak ditemukan.']);
+});
