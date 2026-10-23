@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\CashTransferStatus;
 use Illuminate\Database\Eloquent\Model;
+use LogicException;
 
 /**
  * Physical cash moved from a teller's drawer to the main vault, authorized by a supervisor.
@@ -31,6 +32,19 @@ class CashTransfer extends Model
             'status' => CashTransferStatus::class,
             'reviewed_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Only a pending transfer can change (to approved or rejected); after that it is final.
+     */
+    protected static function booted(): void
+    {
+        static::updating(function (CashTransfer $transfer) {
+            if ($transfer->getOriginal('status') !== CashTransferStatus::PENDING) {
+                throw new LogicException('Pemindahan kas yang sudah diproses tidak dapat diubah.');
+            }
+        });
+        static::deleting(fn () => throw new LogicException('Pemindahan kas tidak dapat dihapus.'));
     }
 
     public function teller()

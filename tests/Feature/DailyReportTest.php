@@ -187,3 +187,13 @@ test('tellers cannot approve reports and supervisors cannot submit them', functi
     actingAsStaff(UserRoles::SUPERVISOR);
     $this->postJson('/api/teller/daily-reports')->assertForbidden();
 });
+
+test('an approved report cannot be edited or deleted', function () {
+    $report = submitReportFor($this->teller);
+    app(DailyReportService::class)->approve($report, User::factory()->supervisor()->create());
+    $report->refresh();
+
+    expect(fn () => $report->update(['total_deposit' => 1]))->toThrow(LogicException::class)
+        ->and(fn () => $report->delete())->toThrow(LogicException::class)
+        ->and($report->fresh()->total_deposit)->toBe(0);
+});
