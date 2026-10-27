@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Support\Terbilang;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -22,6 +23,7 @@ class TransactionResource extends JsonResource
             'type' => $this->type,
             'type_label' => $this->type->label(),
             'amount' => $this->amount,
+            'amount_in_words' => Terbilang::rupiah($this->amount),
             'balance_before' => $this->balance_before,
             'balance_after' => $this->balance_after,
             'created_at' => $this->created_at,

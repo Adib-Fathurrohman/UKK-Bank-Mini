@@ -30,6 +30,13 @@ class JournalResource extends JsonResource
                 'type' => $this->transaction->type,
                 'customer_id' => $this->transaction->customer_id,
                 'user_id' => $this->transaction->user_id,
+                'customer' => $this->transaction->relationLoaded('customer') ? [
+                    'account_number' => $this->transaction->customer->account_number,
+                    'full_name' => $this->transaction->customer->full_name,
+                ] : null,
+                'teller' => $this->transaction->relationLoaded('teller') ? [
+                    'full_name' => $this->transaction->teller->full_name,
+                ] : null,
             ]),
         ];
     }

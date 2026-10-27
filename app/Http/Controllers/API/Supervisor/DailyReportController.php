@@ -9,9 +9,11 @@ use App\Http\Resources\DailyReportResource;
 use App\Http\Resources\TransactionResource;
 use App\Models\DailyReport;
 use App\Services\DailyReportService;
+use App\Services\PdfReportService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Validation\Rule;
+use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Verification of teller shifts, one report at a time (no bulk approval).
@@ -54,6 +56,11 @@ class DailyReportController extends Controller
         return (new DailyReportResource($dailyReport))->additional([
             'transactions' => TransactionResource::collection($dailyReport->transactions()->with('customer')->oldest('id')->get()),
         ]);
+    }
+
+    public function export(DailyReport $dailyReport, PdfReportService $pdf): Response
+    {
+        return $pdf->dailyReport($dailyReport);
     }
 
     /**

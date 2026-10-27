@@ -8,6 +8,7 @@ use App\Http\Controllers\API\Customer\AccountController as CustomerAccountContro
 use App\Http\Controllers\API\Customer\AuthController as CustomerAuthController;
 use App\Http\Controllers\API\LoginController;
 use App\Http\Controllers\API\MajorController;
+use App\Http\Controllers\API\ReportController;
 use App\Http\Controllers\API\SettingsController;
 use App\Http\Controllers\API\Staff\AuthController as StaffAuthController;
 use App\Http\Controllers\API\Supervisor\CashTransferController as SupervisorCashTransferController;
@@ -68,12 +69,16 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
 
         Route::get('customers', [CustomerController::class, 'index']);
         Route::get('customers/{customer}', [CustomerController::class, 'show'])->withTrashed();
+        Route::get('customers/{customer}/statement', [CustomerController::class, 'statement'])->withTrashed();
+        Route::get('reports/annual', [ReportController::class, 'annual']);
 
         Route::prefix('audit')->group(function () {
             Route::get('transactions', [AuditTransactionController::class, 'index']);
+            Route::get('transactions/export', [AuditTransactionController::class, 'export']);
             Route::get('transactions/{transaction}', [AuditTransactionController::class, 'show']);
             Route::get('journals', [JournalController::class, 'index']);
             Route::get('journals/summary', [JournalController::class, 'summary']);
+            Route::get('journals/export', [JournalController::class, 'export']);
         });
     });
 
@@ -84,6 +89,7 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
         Route::get('transactions', [TellerTransactionController::class, 'index']);
         Route::post('deposits', [TellerTransactionController::class, 'deposit']);
         Route::post('withdrawals', [TellerTransactionController::class, 'withdraw']);
+        Route::get('transactions/{transaction}/receipt', [TellerTransactionController::class, 'receipt']);
         Route::post('transactions/{transaction}/correct', [TellerTransactionController::class, 'correct'])
             ->middleware('throttle:10,1');
 
@@ -93,12 +99,14 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
 
         Route::get('daily-reports', [TellerDailyReportController::class, 'index']);
         Route::get('daily-reports/{dailyReport}', [TellerDailyReportController::class, 'show']);
+        Route::get('daily-reports/{dailyReport}/export', [TellerDailyReportController::class, 'export']);
     });
 
     // Supervisor only
     Route::middleware('staff:supervisor')->prefix('supervisor')->name('supervisor.')->group(function () {
         Route::get('daily-reports', [SupervisorDailyReportController::class, 'index']);
         Route::get('daily-reports/{dailyReport}', [SupervisorDailyReportController::class, 'show']);
+        Route::get('daily-reports/{dailyReport}/export', [SupervisorDailyReportController::class, 'export']);
         Route::post('daily-reports/{dailyReport}/approve', [SupervisorDailyReportController::class, 'approve'])->name('daily-reports.approve');
         Route::post('daily-reports/{dailyReport}/hold', [SupervisorDailyReportController::class, 'hold'])->name('daily-reports.hold');
         Route::post('daily-reports/{dailyReport}/reject', [SupervisorDailyReportController::class, 'reject'])->name('daily-reports.reject');
@@ -123,5 +131,6 @@ Route::middleware(['auth:sanctum', 'customer'])->prefix('customer')->group(funct
     Route::get('card', [CustomerAccountController::class, 'card']);
     Route::post('pin', [CustomerAccountController::class, 'changePin']);
     Route::get('transactions', [CustomerAccountController::class, 'transactions']);
+    Route::get('statement/export', [CustomerAccountController::class, 'statement']);
     Route::get('transactions/{transaction}', [CustomerAccountController::class, 'transaction'])->whereNumber('transaction');
 });

@@ -21,6 +21,17 @@ enum ReportStatus: string
     case APPROVED = 'approved';
     case REJECTED = 'rejected';
 
+    public function label(): string
+    {
+        return match ($this) {
+            self::OPEN => 'Berjalan',
+            self::SUBMITTED => 'Menunggu verifikasi',
+            self::ON_HOLD => 'Ditahan',
+            self::APPROVED => 'Disetujui',
+            self::REJECTED => 'Ditolak',
+        };
+    }
+
     /**
      * The teller is still working in this shift.
      */

@@ -9,8 +9,11 @@ use App\Http\Resources\CustomerCardResource;
 use App\Http\Resources\CustomerResource;
 use App\Models\Customer;
 use App\Services\CustomerService;
+use App\Services\PdfReportService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Carbon;
+use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Customer accounts. Administrators manage them; supervisors may only read
@@ -67,6 +70,23 @@ class CustomerController extends Controller
         $customer->update($data);
 
         return new CustomerResource($customer->load('major'));
+    }
+
+    /**
+     * A customer's statement (kartu simpanan) as PDF, e.g. for a parent or the school.
+     */
+    public function statement(Request $request, Customer $customer, PdfReportService $pdf): Response
+    {
+        $range = $request->validate([
+            'from' => ['nullable', 'date'],
+            'to' => ['nullable', 'date', 'after_or_equal:from'],
+        ]);
+
+        return $pdf->statement(
+            $customer,
+            isset($range['from']) ? Carbon::parse($range['from'])->startOfDay() : null,
+            isset($range['to']) ? Carbon::parse($range['to'])->endOfDay() : null,
+        );
     }
 
     /**

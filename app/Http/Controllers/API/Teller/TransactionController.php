@@ -9,12 +9,14 @@ use App\Http\Requests\Teller\WithdrawalRequest;
 use App\Http\Resources\TransactionResource;
 use App\Models\Customer;
 use App\Models\Transaction;
+use App\Services\PdfReportService;
 use App\Services\TransactionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Validator;
+use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Money endpoints accept an optional "Idempotency-Key" header. Sending the same
@@ -83,6 +85,16 @@ class TransactionController extends Controller
         );
 
         return $this->respond($correction->load(['corrects', 'authorizer']));
+    }
+
+    /**
+     * Printable receipt (struk) for one of the teller's own transactions.
+     */
+    public function receipt(Request $request, Transaction $transaction, PdfReportService $pdf): Response
+    {
+        abort_unless($transaction->user_id === $request->user()->id, 404);
+
+        return $pdf->receipt($transaction);
     }
 
     private function customerFrom(StoreTransactionRequest $request): Customer

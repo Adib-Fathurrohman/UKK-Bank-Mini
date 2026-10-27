@@ -6,12 +6,15 @@ use App\Enums\TransactionTypes;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\CustomerCardResource;
 use App\Http\Resources\StatementLineResource;
+use App\Services\PdfReportService;
 use App\Services\PinService;
 use App\Services\SettingsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
+use Symfony\Component\HttpFoundation\Response;
 
 /**
  * The logged-in student's own account. Everything is scoped through the
@@ -56,6 +59,23 @@ class AccountController extends Controller
         $pins->change($request->user(), $data['current_pin'], $data['new_pin']);
 
         return response()->json(['message' => 'PIN berhasil diubah.']);
+    }
+
+    /**
+     * The customer's own statement as PDF ("laporan mutasi mandiri").
+     */
+    public function statement(Request $request, PdfReportService $pdf): Response
+    {
+        $range = $request->validate([
+            'from' => ['nullable', 'date'],
+            'to' => ['nullable', 'date', 'after_or_equal:from'],
+        ]);
+
+        return $pdf->statement(
+            $request->user(),
+            isset($range['from']) ? Carbon::parse($range['from'])->startOfDay() : null,
+            isset($range['to']) ? Carbon::parse($range['to'])->endOfDay() : null,
+        );
     }
 
     public function transactions(Request $request): AnonymousResourceCollection
