@@ -149,7 +149,7 @@ Matches the matrix in the UKK soal (section III.1).
 | User management | C, R, U, D | — | R | — |
 | Accounts (open, edit, close, print card) | C, R, U | R (lookup) | R | — |
 | QR scan lookup | Configure (settings) | R (execute) | — | — |
-| Deposit / withdrawal / correction | — | C | R (audit log) | — |
+| Deposit / withdrawal / correction | R (audit log) | C | R (audit log) | — |
 | Withdrawal PIN | — | — | — | Enters PIN at the counter |
 | Shift, cash closing, daily report draft | — | C, R | R | — |
 | Approve / hold / reject daily report | — | — | U | — |
@@ -987,7 +987,7 @@ the transaction amount; exactly one debit and one credit per transaction),
 | `opening_balance`, `opened_at` | Saldo awal |
 | `transaction_count`, `total_deposit`, `total_withdrawal` | Net of corrections; live while open |
 | `system_balance` | `opening_balance + total_deposit − total_withdrawal` |
-| `physical_balance`, `difference` | Counted cash and `physical − system` (0 once closed); null while open |
+| `physical_balance`, `difference` | Counted cash and `physical − system` (0 once closed); null while a shift is `open`. A `rejected` shift keeps the previous count (and its `closing_counts`) until it is closed again |
 | `submitted_at`, `reviewed_at`, `supervisor_note` | |
 | `teller` | `{ id, full_name, class }` |
 | `supervisor` | `{ id, full_name }` of the reviewer, or null |

@@ -1,0 +1,1642 @@
+{
+  "name": "E-Teller Bank Mini API",
+  "source_of_truth": "Laravel backend implementation (routes, form requests, controllers, services, resources). This file is a generated index; see docs/API.md for examples.",
+  "generated_from_commit": "5ddbd69",
+  "base_url": "{APP_URL}/api (UNKNOWN for deployments; local default http://localhost:8000/api)",
+  "conventions": {
+    "headers": {
+      "Accept": "application/json (always)",
+      "Content-Type": "application/json when sending JSON",
+      "Authorization": "Bearer <token> when auth = bearer"
+    },
+    "money": "integer Rupiah",
+    "timestamps": "ISO 8601 UTC",
+    "dates": "YYYY-MM-DD, Asia/Jakarta",
+    "single_object": "{data: {...}}",
+    "paginated_list": "{data: [...], links: {first,last,prev,next}, meta: {current_page, from, last_page, links, path, per_page, to, total}}",
+    "sorting": "no sort parameters; fixed order per endpoint",
+    "errors": {
+      "401": "{message:'Unauthenticated.'} missing/invalid/expired token",
+      "403": "{message} wrong actor/role, blocked staff, closed customer, or admin account protection",
+      "404": "{message:'Data tidak ditemukan.'} not found or not owned",
+      "409": "{message} staff delete refused (has history)",
+      "422": "{message, errors?} validation (errors per field) or business rule (message only, sometimes extra fields)",
+      "429": "{message:'Too Many Attempts.'}",
+      "500": "{message} server error; money operations fully rolled back"
+    }
+  },
+  "auth": {
+    "mechanism": "Laravel Sanctum personal access tokens (bearer)",
+    "login": "POST /api/login",
+    "token_lifetime_minutes": 480,
+    "refresh": "not implemented",
+    "actors": {
+      "staff": "App\\Models\\User with role admin|supervisor|teller",
+      "customer": "App\\Models\\Customer (nasabah)"
+    }
+  },
+  "enums": {
+    "role": [
+      "admin",
+      "supervisor",
+      "teller"
+    ],
+    "account_status": [
+      "active",
+      "suspended",
+      "inactive"
+    ],
+    "transaction_type": [
+      "deposit",
+      "withdrawal",
+      "deposit_correction",
+      "withdrawal_correction"
+    ],
+    "report_status": [
+      "open",
+      "submitted",
+      "on_hold",
+      "approved",
+      "rejected"
+    ],
+    "account_code": {
+      "101": "Kas",
+      "201": "Tabungan Nasabah"
+    },
+    "position": [
+      "debit",
+      "credit"
+    ],
+    "qr_scanner_mode": [
+      "webcam",
+      "usb",
+      "disabled"
+    ],
+    "denominations": [
+      100000,
+      50000,
+      20000,
+      10000,
+      5000,
+      2000,
+      1000,
+      500,
+      200,
+      100
+    ],
+    "class": [
+      "X",
+      "XI",
+      "XII"
+    ],
+    "group": [
+      "1",
+      "2",
+      "3",
+      "4"
+    ]
+  },
+  "route_count": 58,
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/api/admin/customers",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin"
+      ],
+      "purpose": "Open a savings account; account number generated, status active, balance 0.",
+      "request": {
+        "body": {
+          "nis": {
+            "type": "string",
+            "required": true,
+            "rules": "max 20, unique (including closed accounts)"
+          },
+          "full_name": {
+            "type": "string",
+            "required": true,
+            "rules": "max 255"
+          },
+          "class": {
+            "type": "string",
+            "required": true,
+            "rules": "X|XI|XII"
+          },
+          "major_id": {
+            "type": "integer",
+            "required": true,
+            "rules": "exists in majors"
+          },
+          "group": {
+            "type": "string",
+            "required": true,
+            "rules": "1|2|3|4"
+          },
+          "pin": {
+            "type": "string",
+            "required": true,
+            "rules": "exactly 6 digits"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 {data: Customer {id, account_number, nis, full_name, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}",
+      "errors": [
+        "422 validation"
+      ],
+      "notes": "account_number, account_status and balance in the body are ignored. Format {MAJOR CODE}-{SCHOOL YEAR}-{SERIAL}, e.g. RPL-2026-001."
+    },
+    {
+      "method": [
+        "PUT",
+        "PATCH"
+      ],
+      "path": "/api/admin/customers/{customer}",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin"
+      ],
+      "purpose": "Edit account details, suspend/activate, or reset the PIN (partial).",
+      "request": {
+        "path_params": {
+          "customer": "integer id (closed accounts return 404)"
+        },
+        "body": {
+          "nis": {
+            "type": "string",
+            "required": false,
+            "rules": "max 20, unique ignoring self"
+          },
+          "full_name": {
+            "type": "string",
+            "required": false,
+            "rules": "max 255"
+          },
+          "class": {
+            "type": "string",
+            "required": false,
+            "rules": "X|XI|XII"
+          },
+          "major_id": {
+            "type": "integer",
+            "required": false,
+            "rules": "exists in majors"
+          },
+          "group": {
+            "type": "string",
+            "required": false,
+            "rules": "1|2|3|4"
+          },
+          "account_status": {
+            "type": "string",
+            "required": false,
+            "rules": "active|suspended (inactive refused)"
+          },
+          "pin": {
+            "type": "string",
+            "required": false,
+            "rules": "exactly 6 digits; also clears a PIN lock"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data: Customer {id, account_number, nis, full_name, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}",
+      "errors": [
+        "404",
+        "422"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/customers/{customer}/card",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin"
+      ],
+      "purpose": "Data for printing the customer card; frontend renders qr_payload as a QR code.",
+      "request": {
+        "path_params": {
+          "customer": "integer id"
+        }
+      },
+      "response": "200 {data: CustomerCard {account_number, nis, full_name, class, group, major{code,major_name}, account_status, qr_payload ('BANKMINI:{account_number}')}}",
+      "errors": [
+        "404"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/customers/{customer}/deactivate",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin"
+      ],
+      "purpose": "Graduate/close an account: status inactive, tokens revoked, soft deleted. No balance check, no undo endpoint.",
+      "request": {
+        "path_params": {
+          "customer": "integer id"
+        }
+      },
+      "response": "200 {data: Customer {id, account_number, nis, full_name, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}} with deleted_at set",
+      "errors": [
+        "404 already closed"
+      ]
+    },
+    {
+      "method": [
+        "PUT",
+        "PATCH"
+      ],
+      "path": "/api/admin/settings",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin"
+      ],
+      "purpose": "Change global settings (partial).",
+      "request": {
+        "body": {
+          "min_balance": {
+            "type": "integer",
+            "required": false,
+            "rules": "integer 0-1000000"
+          },
+          "qr_scanner_mode": {
+            "type": "string",
+            "required": false,
+            "rules": "webcam|usb|disabled"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data:{min_balance, qr_scanner_mode}}",
+      "errors": [
+        "422 validation"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/staff",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin"
+      ],
+      "purpose": "Create a teller or supervisor.",
+      "request": {
+        "body": {
+          "username": {
+            "type": "string",
+            "required": true,
+            "rules": "alpha_dash, max 50, unique"
+          },
+          "full_name": {
+            "type": "string",
+            "required": true,
+            "rules": "max 255"
+          },
+          "password": {
+            "type": "string",
+            "required": true,
+            "rules": "min 8"
+          },
+          "role": {
+            "type": "string",
+            "required": true,
+            "rules": "teller|supervisor (admin refused)"
+          },
+          "class": {
+            "type": "string",
+            "required": false,
+            "rules": "nullable, max 20"
+          },
+          "phone": {
+            "type": "string",
+            "required": false,
+            "rules": "nullable, max 20, regex ^[0-9+\\-\\s]+$"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 {data: Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}}",
+      "errors": [
+        "422 validation"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/staff/import",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin"
+      ],
+      "purpose": "Bulk-create tellers/supervisors from a spreadsheet.",
+      "request": {
+        "body": {
+          "file": {
+            "type": "file",
+            "required": true,
+            "rules": "xlsx|csv|txt, max 2048 KB, max 500 data rows; header row with username, full_name|nama|nama_lengkap, password|kata_sandi, role|peran, class|kelas, phone|no_wa|whatsapp|no_hp"
+          }
+        },
+        "row_rules": {
+          "username": "required, alpha_dash, max 50, unique, distinct in file",
+          "full_name": "required, max 255",
+          "password": "optional, min 8 (generated if blank)",
+          "role": "optional teller|supervisor, default teller",
+          "class": "optional max 20",
+          "phone": "optional max 20, regex ^[0-9+\\-\\s]+$"
+        },
+        "content_type": "multipart/form-data"
+      },
+      "response": "201 {data:{created:int, users:[Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at} + generated_password|null]}}",
+      "errors": [
+        "422 errors keyed rows.{index}.{field} (index 0 = sheet row 2); nothing is created"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/staff/{staff}",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin"
+      ],
+      "purpose": "Permanently delete a staff account that has no history.",
+      "request": {
+        "path_params": {
+          "staff": "integer id"
+        }
+      },
+      "response": "200 {message:'Akun staf dihapus.'}",
+      "errors": [
+        "409 staff has transactions/reports/approvals (block instead)",
+        "403 admin target",
+        "404"
+      ]
+    },
+    {
+      "method": [
+        "PUT",
+        "PATCH"
+      ],
+      "path": "/api/admin/staff/{staff}",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin"
+      ],
+      "purpose": "Edit a teller or supervisor (partial).",
+      "request": {
+        "path_params": {
+          "staff": "integer id"
+        },
+        "body": {
+          "username": {
+            "type": "string",
+            "required": false,
+            "rules": "alpha_dash, max 50, unique ignoring self"
+          },
+          "full_name": {
+            "type": "string",
+            "required": false,
+            "rules": "max 255"
+          },
+          "password": {
+            "type": "string",
+            "required": false,
+            "rules": "min 8"
+          },
+          "role": {
+            "type": "string",
+            "required": false,
+            "rules": "teller|supervisor"
+          },
+          "class": {
+            "type": "string",
+            "required": false,
+            "rules": "nullable, max 20"
+          },
+          "phone": {
+            "type": "string",
+            "required": false,
+            "rules": "nullable, max 20, regex ^[0-9+\\-\\s]+$"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data: Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}}",
+      "errors": [
+        "403 'Akun administrator tidak dapat diubah melalui API.' for admin targets",
+        "404",
+        "422"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/staff/{staff}/block",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin"
+      ],
+      "purpose": "Block a staff account (is_active=false, tokens revoked).",
+      "request": {
+        "path_params": {
+          "staff": "integer id"
+        }
+      },
+      "response": "200 {data: Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}}",
+      "errors": [
+        "403 admin target",
+        "404"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/staff/{staff}/unblock",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin"
+      ],
+      "purpose": "Unblock a staff account.",
+      "request": {
+        "path_params": {
+          "staff": "integer id"
+        }
+      },
+      "response": "200 {data: Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}}",
+      "errors": [
+        "403 admin target",
+        "404"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit/journals",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin",
+        "supervisor"
+      ],
+      "purpose": "Accounting journal lines, newest first, with transaction teller/customer.",
+      "request": {
+        "query": {
+          "from": "date or 'YYYY-MM-DD HH:MM'; date-only covers the whole day",
+          "to": "date or 'YYYY-MM-DD HH:MM'; after_or_equal:from",
+          "type": "deposit|withdrawal|deposit_correction|withdrawal_correction",
+          "teller_id": "integer",
+          "customer_id": "integer",
+          "teller": "string max 100, contains match on teller full_name or username",
+          "customer": "string max 100, contains match on customer full_name, account_number or nis",
+          "transaction_id": "integer",
+          "account_code": "101|201",
+          "position": "debit|credit",
+          "page": "integer, default 1",
+          "per_page": "integer, clamped 1-100"
+        }
+      },
+      "response": "200 paginated {data:[{id, transaction_id, account_code, account_name, position, amount, created_at, transaction{id,type,customer_id,user_id,customer{account_number,full_name},teller{full_name}}}], links, meta}; default per_page 30",
+      "errors": [
+        "422"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit/journals/export",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin",
+        "supervisor"
+      ],
+      "purpose": "Journal report PDF with totals and balance check (max 5000 rows).",
+      "request": {
+        "query": {
+          "from": "date or 'YYYY-MM-DD HH:MM'; date-only covers the whole day",
+          "to": "date or 'YYYY-MM-DD HH:MM'; after_or_equal:from",
+          "type": "deposit|withdrawal|deposit_correction|withdrawal_correction",
+          "teller_id": "integer",
+          "customer_id": "integer",
+          "teller": "string max 100, contains match on teller full_name or username",
+          "customer": "string max 100, contains match on customer full_name, account_number or nis",
+          "transaction_id": "integer",
+          "account_code": "101|201",
+          "position": "debit|credit"
+        }
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "summary": "PDF download (Content-Disposition: attachment). Errors are JSON."
+      },
+      "errors": [
+        "422"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit/journals/summary",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin",
+        "supervisor"
+      ],
+      "purpose": "Trial balance per account with the same filters.",
+      "request": {
+        "query": {
+          "from": "date or 'YYYY-MM-DD HH:MM'; date-only covers the whole day",
+          "to": "date or 'YYYY-MM-DD HH:MM'; after_or_equal:from",
+          "type": "deposit|withdrawal|deposit_correction|withdrawal_correction",
+          "teller_id": "integer",
+          "customer_id": "integer",
+          "teller": "string max 100, contains match on teller full_name or username",
+          "customer": "string max 100, contains match on customer full_name, account_number or nis",
+          "transaction_id": "integer",
+          "account_code": "101|201",
+          "position": "debit|credit"
+        }
+      },
+      "response": "200 {data:{accounts:[{account_code, account_name, total_debit, total_credit}], total_debit, total_credit, is_balanced}}",
+      "errors": [
+        "422"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit/transactions",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin",
+        "supervisor"
+      ],
+      "purpose": "Transaction log (audit trail), newest first.",
+      "request": {
+        "query": {
+          "from": "date or 'YYYY-MM-DD HH:MM'; date-only covers the whole day",
+          "to": "date or 'YYYY-MM-DD HH:MM'; after_or_equal:from",
+          "type": "deposit|withdrawal|deposit_correction|withdrawal_correction",
+          "teller_id": "integer",
+          "customer_id": "integer",
+          "teller": "string max 100, contains match on teller full_name or username",
+          "customer": "string max 100, contains match on customer full_name, account_number or nis",
+          "page": "integer, default 1",
+          "per_page": "integer, clamped 1-100"
+        }
+      },
+      "response": "200 paginated {data:[Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?} with customer, teller, authorized_by, corrected_by], links, meta}; default per_page 15",
+      "errors": [
+        "422 invalid filters"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit/transactions/export",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin",
+        "supervisor"
+      ],
+      "purpose": "Audit trail PDF (max 5000 rows).",
+      "request": {
+        "query": {
+          "from": "date or 'YYYY-MM-DD HH:MM'; date-only covers the whole day",
+          "to": "date or 'YYYY-MM-DD HH:MM'; after_or_equal:from",
+          "type": "deposit|withdrawal|deposit_correction|withdrawal_correction",
+          "teller_id": "integer",
+          "customer_id": "integer",
+          "teller": "string max 100, contains match on teller full_name or username",
+          "customer": "string max 100, contains match on customer full_name, account_number or nis"
+        }
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "summary": "PDF download (Content-Disposition: attachment). Errors are JSON."
+      },
+      "errors": [
+        "422"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit/transactions/{transaction}",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin",
+        "supervisor"
+      ],
+      "purpose": "One transaction with journal lines and correction links.",
+      "request": {
+        "path_params": {
+          "transaction": "integer id"
+        }
+      },
+      "response": "200 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?} incl. journals}",
+      "errors": [
+        "404"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/customer/balance",
+      "auth": "bearer",
+      "actor": "customer",
+      "roles": [
+        "customer"
+      ],
+      "purpose": "Own balance.",
+      "ownership": "scoped to the authenticated user",
+      "request": {},
+      "response": "200 {data:{account_number, full_name, account_status, balance, min_balance, as_of}}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/customer/card",
+      "auth": "bearer",
+      "actor": "customer",
+      "roles": [
+        "customer"
+      ],
+      "purpose": "Own digital card; render qr_payload as a QR code for the teller.",
+      "ownership": "scoped to the authenticated user",
+      "request": {},
+      "response": "200 {data: CustomerCard {account_number, nis, full_name, class, group, major{code,major_name}, account_status, qr_payload ('BANKMINI:{account_number}')}}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/customer/login",
+      "auth": "none",
+      "actor": "public",
+      "roles": [],
+      "purpose": "Customer-only login (alias of POST /api/login).",
+      "rate_limit": [
+        "5 per minute per username/identifier + IP"
+      ],
+      "request": {
+        "body": {
+          "identifier": {
+            "type": "string",
+            "required": true,
+            "rules": "required, max 50; NIS or account number"
+          },
+          "pin": {
+            "type": "string",
+            "required": true,
+            "rules": "exactly 6 digits"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data:{actor:'staff'|'customer', token, token_type:'Bearer', user: Staff | customer: Customer}}",
+      "errors": [
+        "422",
+        "429"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/customer/logout",
+      "auth": "bearer",
+      "actor": "customer",
+      "roles": [
+        "customer"
+      ],
+      "purpose": "Revoke the current customer token.",
+      "ownership": "scoped to the authenticated user",
+      "request": {},
+      "response": "200 {message:'Berhasil keluar.'}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/customer/me",
+      "auth": "bearer",
+      "actor": "customer",
+      "roles": [
+        "customer"
+      ],
+      "purpose": "Current customer with major.",
+      "ownership": "scoped to the authenticated user",
+      "request": {},
+      "response": "200 {data: Customer {id, account_number, nis, full_name, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/customer/pin",
+      "auth": "bearer",
+      "actor": "customer",
+      "roles": [
+        "customer"
+      ],
+      "purpose": "Change own PIN.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "body": {
+          "current_pin": {
+            "type": "string",
+            "required": true,
+            "rules": "exactly 6 digits; wrong values count toward the PIN lock"
+          },
+          "new_pin": {
+            "type": "string",
+            "required": true,
+            "rules": "exactly 6 digits, different from current_pin, confirmed"
+          },
+          "new_pin_confirmation": {
+            "type": "string",
+            "required": true,
+            "rules": "must equal new_pin"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {message:'PIN berhasil diubah.'}",
+      "errors": [
+        "422 validation",
+        "422 wrong current PIN {remaining_attempts, pin_locked_until}",
+        "422 PIN locked"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/customer/statement/export",
+      "auth": "bearer",
+      "actor": "customer",
+      "roles": [
+        "customer"
+      ],
+      "purpose": "Own statement PDF.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "query": {
+          "from": "date, optional",
+          "to": "date, optional, after_or_equal:from"
+        }
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "summary": "PDF download (Content-Disposition: attachment). Errors are JSON."
+      },
+      "errors": [
+        "422"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/customer/transactions",
+      "auth": "bearer",
+      "actor": "customer",
+      "roles": [
+        "customer"
+      ],
+      "purpose": "Own statement lines, newest first.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "query": {
+          "from": "date, optional",
+          "to": "date, optional, after_or_equal:from",
+          "type": "deposit|withdrawal|deposit_correction|withdrawal_correction",
+          "page": "integer, default 1",
+          "per_page": "integer, clamped 1-100"
+        }
+      },
+      "response": "200 paginated {data:[{id, type, direction:'in'|'out', description, amount, balance_after, created_at}], links, meta}; default per_page 20",
+      "errors": [
+        "422"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/customer/transactions/{transaction}",
+      "auth": "bearer",
+      "actor": "customer",
+      "roles": [
+        "customer"
+      ],
+      "purpose": "One own statement line.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "path_params": {
+          "transaction": "integer id (numeric only)"
+        }
+      },
+      "response": "200 {data: StatementLine}",
+      "errors": [
+        "404 not own"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/customers",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin",
+        "supervisor"
+      ],
+      "purpose": "List customer accounts sorted by name.",
+      "request": {
+        "query": {
+          "search": "contains match on full_name, nis, account_number",
+          "major_id": "not validated",
+          "class": "not validated",
+          "group": "not validated",
+          "status": "not validated",
+          "trashed": "with | only (closed accounts); default excludes closed",
+          "page": "integer, default 1",
+          "per_page": "integer, clamped 1-100"
+        }
+      },
+      "response": "200 paginated {data:[Customer {id, account_number, nis, full_name, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}], links, meta}; default per_page 15"
+    },
+    {
+      "method": "GET",
+      "path": "/api/customers/{customer}",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin",
+        "supervisor"
+      ],
+      "purpose": "One customer account (closed accounts included).",
+      "request": {
+        "path_params": {
+          "customer": "integer id"
+        }
+      },
+      "response": "200 {data: Customer {id, account_number, nis, full_name, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}",
+      "errors": [
+        "404"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/customers/{customer}/statement",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin",
+        "supervisor"
+      ],
+      "purpose": "Customer statement PDF (kartu simpanan) for any customer, closed accounts included.",
+      "request": {
+        "path_params": {
+          "customer": "integer id"
+        },
+        "query": {
+          "from": "date, optional",
+          "to": "date, optional, after_or_equal:from"
+        }
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "summary": "PDF download (Content-Disposition: attachment). Errors are JSON."
+      },
+      "errors": [
+        "404",
+        "422"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/login",
+      "auth": "none",
+      "actor": "public",
+      "roles": [],
+      "purpose": "Single login gateway for all roles. Staff send username+password, customers send identifier+pin.",
+      "rate_limit": [
+        "5 per minute per username/identifier + IP"
+      ],
+      "request": {
+        "body": {
+          "username": {
+            "type": "string",
+            "required": true,
+            "rules": "required, max 255"
+          },
+          "password": {
+            "type": "string",
+            "required": true,
+            "rules": "required"
+          },
+          "identifier": {
+            "type": "string",
+            "required": true,
+            "rules": "required, max 50; NIS or account number"
+          },
+          "pin": {
+            "type": "string",
+            "required": true,
+            "rules": "exactly 6 digits"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data:{actor:'staff'|'customer', token, token_type:'Bearer', user: Staff | customer: Customer}}",
+      "errors": [
+        "422 wrong credentials / blocked staff / closed account / missing fields",
+        "429 more than 5 attempts per minute per identifier+IP"
+      ],
+      "notes": "If username is filled the staff login runs; else if identifier is filled the customer login runs; else 422 on username."
+    },
+    {
+      "method": "GET",
+      "path": "/api/majors",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin",
+        "supervisor",
+        "teller"
+      ],
+      "purpose": "All majors for dropdowns (not paginated).",
+      "request": {},
+      "response": "200 {data:[{id, code, major_name}]} sorted by name"
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/annual",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin",
+        "supervisor"
+      ],
+      "purpose": "Annual report PDF for one school year (July-June): balances per product and per account.",
+      "request": {
+        "query": {
+          "school_year": "integer 2000-2100, optional; default current school year; 2026 means 2026/2027"
+        }
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "summary": "PDF download (Content-Disposition: attachment). Errors are JSON."
+      },
+      "errors": [
+        "422"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin",
+        "supervisor",
+        "teller"
+      ],
+      "purpose": "Read global settings.",
+      "request": {},
+      "response": "200 {data:{min_balance:int, qr_scanner_mode:'webcam'|'usb'|'disabled'}}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/staff",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin",
+        "supervisor"
+      ],
+      "purpose": "List staff sorted by name.",
+      "request": {
+        "query": {
+          "status": "active (default) | inactive | all — not validated",
+          "role": "admin|supervisor|teller — not validated",
+          "search": "contains match on username or full_name",
+          "page": "integer, default 1",
+          "per_page": "integer, clamped 1-100"
+        }
+      },
+      "response": "200 paginated {data:[Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}], links, meta}; default per_page 15"
+    },
+    {
+      "method": "POST",
+      "path": "/api/staff/login",
+      "auth": "none",
+      "actor": "public",
+      "roles": [],
+      "purpose": "Staff-only login (alias of POST /api/login).",
+      "rate_limit": [
+        "5 per minute per username/identifier + IP"
+      ],
+      "request": {
+        "body": {
+          "username": {
+            "type": "string",
+            "required": true,
+            "rules": "required, max 255"
+          },
+          "password": {
+            "type": "string",
+            "required": true,
+            "rules": "required"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data:{actor:'staff'|'customer', token, token_type:'Bearer', user: Staff | customer: Customer}}",
+      "errors": [
+        "422",
+        "429"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/staff/logout",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin",
+        "supervisor",
+        "teller"
+      ],
+      "purpose": "Revoke the current staff token.",
+      "request": {},
+      "response": "200 {message:'Berhasil keluar.'}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/staff/me",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin",
+        "supervisor",
+        "teller"
+      ],
+      "purpose": "Current staff user.",
+      "request": {},
+      "response": "200 {data: Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/staff/{staff}",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin",
+        "supervisor"
+      ],
+      "purpose": "One staff member.",
+      "request": {
+        "path_params": {
+          "staff": "integer id"
+        }
+      },
+      "response": "200 {data: Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}}",
+      "errors": [
+        "404"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/supervisor/cash-transfers",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "supervisor"
+      ],
+      "purpose": "Vault ledger (cash moved from teller drawers by approvals), newest first.",
+      "request": {
+        "query": {
+          "from": "date, optional",
+          "to": "date, optional, after_or_equal:from",
+          "teller_id": "integer",
+          "page": "integer, default 1",
+          "per_page": "integer, clamped 1-100"
+        }
+      },
+      "response": "200 paginated {data:[{id, source:'teller_drawer', destination:'main_vault', amount, transferred_at, daily_report{id,report_date,teller{id,full_name}}, approved_by{id,full_name}}], links, meta, total_amount}; default per_page 15",
+      "errors": [
+        "422"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/supervisor/cash-transfers/{cashTransfer}",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "supervisor"
+      ],
+      "purpose": "One cash transfer.",
+      "request": {
+        "path_params": {
+          "cashTransfer": "integer id"
+        }
+      },
+      "response": "200 {data: CashTransfer}",
+      "errors": [
+        "404"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/supervisor/daily-reports",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "supervisor"
+      ],
+      "purpose": "All daily reports (open shifts with live totals), newest date first.",
+      "request": {
+        "query": {
+          "status": "open|submitted|on_hold|approved|rejected",
+          "date": "date",
+          "teller_id": "integer",
+          "page": "integer, default 1",
+          "per_page": "integer, clamped 1-100"
+        }
+      },
+      "response": "200 paginated {data:[DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?} with teller, supervisor], links, meta}; default per_page 15",
+      "errors": [
+        "422 invalid status/date"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/supervisor/daily-reports/{dailyReport}",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "supervisor"
+      ],
+      "purpose": "One report with counts, cash transfer and transactions.",
+      "request": {
+        "path_params": {
+          "dailyReport": "integer id"
+        }
+      },
+      "response": "200 {data: DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?}, transactions:[Transaction]}",
+      "errors": [
+        "404"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/supervisor/daily-reports/{dailyReport}/approve",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "supervisor"
+      ],
+      "purpose": "Approve a submitted/on_hold report; creates the drawer-to-vault cash transfer (if counted cash > 0). Final.",
+      "request": {
+        "path_params": {
+          "dailyReport": "integer id"
+        },
+        "body": {
+          "note": {
+            "type": "string",
+            "required": false,
+            "rules": "nullable, max 1000"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data: DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?} with cash_transfer}",
+      "errors": [
+        "422 status does not allow approval",
+        "404"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/supervisor/daily-reports/{dailyReport}/export",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "supervisor"
+      ],
+      "purpose": "Daily closing report PDF.",
+      "request": {
+        "path_params": {
+          "dailyReport": "integer id"
+        }
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "summary": "PDF download (Content-Disposition: attachment). Errors are JSON."
+      },
+      "errors": [
+        "422 not closed with matching cash",
+        "404"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/supervisor/daily-reports/{dailyReport}/hold",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "supervisor"
+      ],
+      "purpose": "Put a submitted report on hold.",
+      "request": {
+        "path_params": {
+          "dailyReport": "integer id"
+        },
+        "body": {
+          "note": {
+            "type": "string",
+            "required": true,
+            "rules": "required, max 1000"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data: DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?}}",
+      "errors": [
+        "422 note missing",
+        "422 already on hold / not awaiting review",
+        "404"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/supervisor/daily-reports/{dailyReport}/reject",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "supervisor"
+      ],
+      "purpose": "Reject a submitted/on_hold report; the shift becomes active again for the teller.",
+      "request": {
+        "path_params": {
+          "dailyReport": "integer id"
+        },
+        "body": {
+          "note": {
+            "type": "string",
+            "required": true,
+            "rules": "required, max 1000"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data: DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?}}",
+      "errors": [
+        "422 note missing",
+        "422 not awaiting review",
+        "422 teller runs another shift",
+        "404"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/teller/customers/lookup",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "teller"
+      ],
+      "purpose": "Find one non-closed customer by scanned QR payload, account number (tried first) or NIS.",
+      "request": {
+        "query": {
+          "identifier": "required, string, max 60; 'BANKMINI:' prefix is stripped; URL-encode"
+        }
+      },
+      "response": "200 {data:{id, account_number, nis, full_name, class, group, major_name, account_status, balance, pin_locked_until (only while in the future)}}",
+      "errors": [
+        "404 'Nasabah tidak ditemukan.'",
+        "422"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/teller/daily-reports",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "teller"
+      ],
+      "purpose": "The teller's own shifts, newest date first.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "query": {
+          "page": "integer, default 1",
+          "per_page": "integer, clamped 1-100"
+        }
+      },
+      "response": "200 paginated {data:[DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?}], links, meta}; default per_page 15"
+    },
+    {
+      "method": "GET",
+      "path": "/api/teller/daily-reports/{dailyReport}",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "teller"
+      ],
+      "purpose": "One own shift with counts, cash transfer and transactions.",
+      "ownership": "own records only; others return 404",
+      "request": {
+        "path_params": {
+          "dailyReport": "integer id"
+        }
+      },
+      "response": "200 {data: DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?}, transactions:[Transaction]}",
+      "errors": [
+        "404 not own"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/teller/daily-reports/{dailyReport}/export",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "teller"
+      ],
+      "purpose": "Own daily closing report PDF.",
+      "ownership": "own records only; others return 404",
+      "request": {
+        "path_params": {
+          "dailyReport": "integer id"
+        }
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "summary": "PDF download (Content-Disposition: attachment). Errors are JSON."
+      },
+      "errors": [
+        "422 shift not closed with matching cash (status must be submitted, on_hold or approved)",
+        "404 not own"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/teller/deposits",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "teller"
+      ],
+      "purpose": "Record a cash deposit in the active shift.",
+      "request": {
+        "headers": {
+          "Idempotency-Key": {
+            "required": false,
+            "rules": "string, max 100, regex ^[A-Za-z0-9_.:-]+$",
+            "behavior": "same key + same request returns the original transaction with 200 (header Idempotent-Replayed: true); same key + different request returns 422"
+          }
+        },
+        "body": {
+          "account_number": {
+            "type": "string",
+            "required": true,
+            "rules": "exists in customers and not closed"
+          },
+          "amount": {
+            "type": "integer",
+            "required": true,
+            "rules": "integer 1-100000000 (backend does not require multiples of 100; frontend should)"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?}}; 200 on idempotent replay",
+      "errors": [
+        "422 validation",
+        "422 no shift / shift closed / earlier shift still open",
+        "422 account not active",
+        "422 idempotency key conflict"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/teller/shift",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "teller"
+      ],
+      "purpose": "The teller's active shift (open or rejected) with live totals and its transactions.",
+      "ownership": "scoped to the authenticated user",
+      "request": {},
+      "response": "200 {data: DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?}, can_transact: bool, transactions:[Transaction]} or {data:null, can_transact:false, closed_today:bool}",
+      "notes": "For a rejected shift, physical_balance, difference and closing_counts are stale values from the rejected close."
+    },
+    {
+      "method": "POST",
+      "path": "/api/teller/shift/close",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "teller"
+      ],
+      "purpose": "Close the active shift; physical cash must equal opening + net deposits - net withdrawals.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "body": {
+          "denominations": {
+            "type": "object",
+            "required": true,
+            "rules": "present; keys only [100000, 50000, 20000, 10000, 5000, 2000, 1000, 500, 200, 100]; values integer 0-100000",
+            "example": {
+              "50000": 2,
+              "10000": 5
+            }
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data: DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?} status submitted, difference 0, closing_counts}",
+      "errors": [
+        "422 cash mismatch with system_balance, physical_balance, difference (nothing saved)",
+        "422 no active shift"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/teller/shift/open",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "teller"
+      ],
+      "purpose": "Open today's shift with the opening cash count.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "body": {
+          "denominations": {
+            "type": "object",
+            "required": true,
+            "rules": "present; keys only [100000, 50000, 20000, 10000, 5000, 2000, 1000, 500, 200, 100]; values integer 0-100000",
+            "example": {
+              "50000": 2,
+              "10000": 5
+            }
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 {data: DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?} with opening_counts}",
+      "errors": [
+        "422 a shift is still active",
+        "422 today's shift already closed",
+        "422 invalid denominations"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/teller/transactions",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "teller"
+      ],
+      "purpose": "The teller's own transactions for one date, newest first.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "query": {
+          "date": "date, default today",
+          "page": "integer, default 1",
+          "per_page": "integer, clamped 1-100"
+        }
+      },
+      "response": "200 paginated {data:[Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?} with corrected_by, authorized_by], links, meta}; default per_page 50"
+    },
+    {
+      "method": "POST",
+      "path": "/api/teller/transactions/{transaction}/correct",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "teller"
+      ],
+      "purpose": "Reverse an own deposit/withdrawal from the original's still-active shift with a correction transaction.",
+      "rate_limit": [
+        "10 per 1 minute(s) per user"
+      ],
+      "ownership": "own records only; others return 404",
+      "request": {
+        "path_params": {
+          "transaction": "integer id of the original"
+        },
+        "headers": {
+          "Idempotency-Key": {
+            "required": false,
+            "rules": "string, max 100, regex ^[A-Za-z0-9_.:-]+$",
+            "behavior": "same key + same request returns the original transaction with 200 (header Idempotent-Replayed: true); same key + different request returns 422"
+          }
+        },
+        "body": {
+          "reason": {
+            "type": "string",
+            "required": true,
+            "rules": "max 255"
+          },
+          "supervisor_username": {
+            "type": "string",
+            "required": true,
+            "rules": "username of an active supervisor"
+          },
+          "supervisor_password": {
+            "type": "string",
+            "required": true,
+            "rules": "that supervisor's password"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?} type deposit_correction|withdrawal_correction with corrects_transaction_id, authorized_by}; 200 on replay",
+      "errors": [
+        "422 errors.supervisor_password",
+        "422 already corrected",
+        "422 correction of a correction",
+        "422 wrong/closed shift",
+        "422 deposit correction would make balance negative",
+        "404 not own",
+        "429 more than 10 per minute"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/teller/transactions/{transaction}/receipt",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "teller"
+      ],
+      "purpose": "Receipt PDF (80 mm) for an own transaction.",
+      "ownership": "own records only; others return 404",
+      "request": {
+        "path_params": {
+          "transaction": "integer id"
+        }
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "summary": "PDF download (Content-Disposition: attachment). Errors are JSON."
+      },
+      "errors": [
+        "404 not own"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/teller/withdrawals",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "teller"
+      ],
+      "purpose": "Record a cash withdrawal authorized by the customer's PIN.",
+      "request": {
+        "headers": {
+          "Idempotency-Key": {
+            "required": false,
+            "rules": "string, max 100, regex ^[A-Za-z0-9_.:-]+$",
+            "behavior": "same key + same request returns the original transaction with 200 (header Idempotent-Replayed: true); same key + different request returns 422"
+          }
+        },
+        "body": {
+          "account_number": {
+            "type": "string",
+            "required": true,
+            "rules": "exists in customers and not closed"
+          },
+          "amount": {
+            "type": "integer",
+            "required": true,
+            "rules": "integer 1-100000000; balance - amount >= min_balance setting"
+          },
+          "pin": {
+            "type": "string",
+            "required": true,
+            "rules": "exactly 6 digits; checked before shift/status/balance; 3 wrong in a row lock 15 minutes"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?}}; 200 on idempotent replay (PIN not re-checked)",
+      "errors": [
+        "422 wrong PIN {message, remaining_attempts, pin_locked_until}",
+        "422 PIN locked",
+        "422 insufficient balance (minimum balance)",
+        "422 deposit errors"
+      ]
+    }
+  ]
+}
