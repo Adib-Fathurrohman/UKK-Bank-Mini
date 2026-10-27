@@ -138,6 +138,7 @@ test('a staff member without any history can be deleted permanently', function (
 
 test('a staff member with transaction history cannot be deleted, only blocked', function () {
     $teller = User::factory()->teller()->create();
+    openShiftFor($teller);
     app(TransactionService::class)->deposit(Customer::factory()->create(), 10000, $teller);
 
     $this->deleteJson("/api/admin/staff/{$teller->id}")

@@ -8,11 +8,23 @@ use Illuminate\Support\Facades\DB;
 // These tests write through the query builder on purpose, so the database
 // itself (not Eloquent or validation) has to reject the bad data.
 
+function insertDailyReport(array $overrides = []): int
+{
+    return DB::table('daily_reports')->insertGetId(array_merge([
+        'teller_id' => User::factory()->teller()->create()->id,
+        'report_date' => '2026-10-23',
+        'status' => 'open',
+    ], $overrides));
+}
+
 function insertTransaction(array $overrides = []): int
 {
+    $tellerId = User::factory()->teller()->create()->id;
+
     return DB::table('transactions')->insertGetId(array_merge([
-        'user_id' => User::factory()->teller()->create()->id,
+        'user_id' => $tellerId,
         'customer_id' => Customer::factory()->create()->id,
+        'daily_report_id' => insertDailyReport(['teller_id' => $tellerId]),
         'type' => 'deposit',
         'amount' => 10000,
         'balance_before' => 0,
@@ -39,7 +51,18 @@ test('valid rows are accepted by the helpers above', function () {
     insertJournal($transactionId, ['position' => 'debit', 'account_code' => '101']);
     insertJournal($transactionId, ['position' => 'credit', 'account_code' => '201']);
 
-    expect(DB::table('accounting_journals')->where('transaction_id', $transactionId)->count())->toBe(2);
+    $reportId = DB::table('transactions')->where('id', $transactionId)->value('daily_report_id');
+    DB::table('cash_counts')->insert(['daily_report_id' => $reportId, 'stage' => 'opening', 'denomination' => 1000, 'quantity' => 1]);
+    DB::table('cash_transfers')->insert([
+        'daily_report_id' => $reportId,
+        'amount' => 1000,
+        'approved_by' => User::factory()->supervisor()->create()->id,
+        'transferred_at' => now(),
+    ]);
+
+    expect(DB::table('accounting_journals')->where('transaction_id', $transactionId)->count())->toBe(2)
+        ->and(DB::table('cash_counts')->count())->toBe(1)
+        ->and(DB::table('cash_transfers')->count())->toBe(1);
 });
 
 test('transaction amount must be positive', function (int $amount) {
@@ -52,10 +75,48 @@ test('journal amount must be positive', function (int $amount) {
 
 test('cash transfer amount must be positive', function () {
     DB::table('cash_transfers')->insert([
-        'teller_id' => User::factory()->teller()->create()->id,
+        'daily_report_id' => insertDailyReport(),
         'amount' => 0,
-        'status' => 'pending',
+        'approved_by' => User::factory()->supervisor()->create()->id,
+        'transferred_at' => now(),
     ]);
+})->throws(QueryException::class);
+
+test('a daily report moves cash to the vault at most once', function () {
+    $reportId = insertDailyReport();
+    $supervisorId = User::factory()->supervisor()->create()->id;
+
+    foreach (range(1, 2) as $attempt) {
+        DB::table('cash_transfers')->insert([
+            'daily_report_id' => $reportId,
+            'amount' => 1000,
+            'approved_by' => $supervisorId,
+            'transferred_at' => now(),
+        ]);
+    }
+})->throws(QueryException::class);
+
+test('cash counts need a positive quantity and denomination', function (array $row) {
+    DB::table('cash_counts')->insert([
+        'daily_report_id' => insertDailyReport(),
+        'stage' => 'opening',
+        ...$row,
+    ]);
+})->with([
+    'zero quantity' => [['denomination' => 1000, 'quantity' => 0]],
+    'zero denomination' => [['denomination' => 0, 'quantity' => 1]],
+])->throws(QueryException::class);
+
+test('a denomination is counted once per stage', function () {
+    $reportId = insertDailyReport();
+
+    foreach (range(1, 2) as $attempt) {
+        DB::table('cash_counts')->insert(['daily_report_id' => $reportId, 'stage' => 'closing', 'denomination' => 1000, 'quantity' => 1]);
+    }
+})->throws(QueryException::class);
+
+test('every transaction belongs to a shift', function () {
+    insertTransaction(['daily_report_id' => null]);
 })->throws(QueryException::class);
 
 test('customer balance can never be negative', function () {
@@ -75,15 +136,11 @@ test('journal account code must be a known account', function () {
     insertJournal(insertTransaction(), ['account_code' => '999']);
 })->throws(QueryException::class);
 
-test('a teller has only one daily report per date', function () {
-    $teller = User::factory()->teller()->create();
+test('a teller has only one shift per date', function () {
+    $tellerId = User::factory()->teller()->create()->id;
 
     foreach (range(1, 2) as $attempt) {
-        DB::table('daily_reports')->insert([
-            'teller_id' => $teller->id,
-            'report_date' => '2026-10-23',
-            'status' => 'draft',
-        ]);
+        insertDailyReport(['teller_id' => $tellerId]);
     }
 })->throws(QueryException::class);
 

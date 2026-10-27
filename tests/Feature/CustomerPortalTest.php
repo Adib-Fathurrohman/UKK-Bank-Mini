@@ -16,8 +16,11 @@ beforeEach(function () {
 
     $service = app(TransactionService::class);
     $this->travelTo(Carbon::parse('2026-10-20 09:00:00'));
+    openShiftFor($teller);
     $service->deposit($this->customer, 100000, $teller);
+    closeShiftFor($teller);
     $this->travelTo(Carbon::parse('2026-10-23 09:00:00'));
+    openShiftFor($teller);
     $service->withdraw($this->customer, 30000, $teller);
     $this->otherTransaction = $service->deposit($this->other, 500000, $teller);
     $this->travelTo(Carbon::parse('2026-10-23 10:00:00'));

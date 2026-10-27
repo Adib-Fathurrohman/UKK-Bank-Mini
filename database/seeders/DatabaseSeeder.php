@@ -4,18 +4,22 @@ namespace Database\Seeders;
 
 use App\Enums\UserRoles;
 use App\Models\Customer;
+use App\Models\DailyReport;
 use App\Models\Major;
 use App\Models\User;
 use App\Services\CustomerService;
+use App\Services\DailyReportService;
 use App\Services\TransactionService;
+use App\Support\Cash;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Carbon;
 
 /**
  * Demo data for the UKK presentation. Safe to run more than once.
  */
 class DatabaseSeeder extends Seeder
 {
-    public function run(TransactionService $transactions, CustomerService $customerService): void
+    public function run(TransactionService $transactions, CustomerService $customerService, DailyReportService $reports): void
     {
         // =========================
         // MAJORS
@@ -44,7 +48,7 @@ class DatabaseSeeder extends Seeder
         $staff = [
             ['username' => 'admin', 'full_name' => 'Administrator', 'role' => UserRoles::ADMIN],
             ['username' => 'supervisor', 'full_name' => 'Supervisor Bank Mini', 'role' => UserRoles::SUPERVISOR],
-            ['username' => 'teller', 'full_name' => 'Teller Loket 1', 'role' => UserRoles::TELLER],
+            ['username' => 'teller', 'full_name' => 'Teller Loket 1', 'role' => UserRoles::TELLER, 'class' => 'XI AK 1', 'phone' => '081200000001'],
         ];
 
         foreach ($staff as $member) {
@@ -85,7 +89,7 @@ class DatabaseSeeder extends Seeder
             ],
         ];
 
-        $teller = User::where('username', 'teller')->firstOrFail();
+        $newAccounts = [];
 
         foreach ($customers as $data) {
             $customer = Customer::withTrashed()->firstWhere('nis', $data['nis'])
@@ -98,11 +102,49 @@ class DatabaseSeeder extends Seeder
                     'pin' => '123456',
                 ]);
 
-            // Opening balances go through a real teller deposit so the balance,
-            // the transaction history and the journal always agree.
             if ($customer->wasRecentlyCreated) {
-                $transactions->deposit($customer, $data['opening_balance'], $teller);
+                $newAccounts[] = [$customer, $data['opening_balance']];
             }
+        }
+
+        if ($newAccounts !== []) {
+            $this->depositOpeningBalances($newAccounts, $transactions, $reports);
+        }
+    }
+
+    /**
+     * Opening balances go through real teller deposits so balances, history and
+     * journal always agree. They are recorded in a complete shift dated
+     * yesterday (opened, closed with matching cash, approved), so the demo
+     * teller can open a fresh shift today.
+     *
+     * @param  array<int, array{0: Customer, 1: int}>  $accounts
+     */
+    private function depositOpeningBalances(array $accounts, TransactionService $transactions, DailyReportService $reports): void
+    {
+        $teller = User::where('username', 'teller')->firstOrFail();
+        $supervisor = User::where('username', 'supervisor')->firstOrFail();
+        $day = now()->subDay();
+
+        if (DailyReport::where('teller_id', $teller->id)->whereDate('report_date', $day)->exists()) {
+            return;
+        }
+
+        $previousNow = Carbon::getTestNow();
+
+        try {
+            Carbon::setTestNow($day->copy()->setTime(7, 0));
+            $shift = $reports->open($teller, Cash::breakdown(100000));
+
+            foreach ($accounts as [$customer, $amount]) {
+                $transactions->deposit($customer, $amount, $teller);
+            }
+
+            Carbon::setTestNow($day->copy()->setTime(14, 0));
+            $report = $reports->close($teller, Cash::breakdown($reports->summarize($shift)['system_balance']));
+            $reports->approve($report, $supervisor, 'Saldo awal nasabah demo.');
+        } finally {
+            Carbon::setTestNow($previousNow);
         }
     }
 }

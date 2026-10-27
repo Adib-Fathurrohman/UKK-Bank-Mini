@@ -2,7 +2,10 @@
 
 use App\Enums\UserRoles;
 use App\Models\Customer;
+use App\Models\DailyReport;
 use App\Models\User;
+use App\Services\DailyReportService;
+use App\Support\Cash;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -58,6 +61,25 @@ function actingAsStaff(UserRoles $role = UserRoles::TELLER, array $attributes = 
     Sanctum::actingAs($user);
 
     return $user;
+}
+
+/**
+ * Open today's shift for a teller with the given opening cash.
+ */
+function openShiftFor(User $teller, int $openingBalance = 0): DailyReport
+{
+    return app(DailyReportService::class)->open($teller, Cash::breakdown($openingBalance));
+}
+
+/**
+ * Close the teller's active shift with exactly the cash the system expects.
+ */
+function closeShiftFor(User $teller): DailyReport
+{
+    $reports = app(DailyReportService::class);
+    $expected = $reports->summarize($reports->activeShift($teller))['system_balance'];
+
+    return $reports->close($teller, Cash::breakdown($expected));
 }
 
 /**

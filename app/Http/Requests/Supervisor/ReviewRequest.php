@@ -5,7 +5,7 @@ namespace App\Http\Requests\Supervisor;
 use Illuminate\Foundation\Http\FormRequest;
 
 /**
- * Approve or reject a submission. A rejection must explain why.
+ * Approve, hold or reject a daily report. Holding and rejecting must explain why.
  */
 class ReviewRequest extends FormRequest
 {
@@ -17,7 +17,7 @@ class ReviewRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'note' => [$this->routeIs('*.reject') ? 'required' : 'nullable', 'string', 'max:1000'],
+            'note' => [$this->routeIs('*.reject', '*.hold') ? 'required' : 'nullable', 'string', 'max:1000'],
         ];
     }
 }

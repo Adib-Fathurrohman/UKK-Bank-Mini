@@ -49,6 +49,7 @@ test('only administrators can change settings', function (UserRoles $role) {
 test('withdrawals use the minimum balance set by the administrator', function () {
     app(SettingsService::class)->update(['min_balance' => 30000], User::factory()->admin()->create());
     $teller = User::factory()->teller()->create();
+    openShiftFor($teller);
     $customer = Customer::factory()->create(['balance' => 50000]);
 
     expect(fn () => app(TransactionService::class)->withdraw($customer, 25000, $teller))

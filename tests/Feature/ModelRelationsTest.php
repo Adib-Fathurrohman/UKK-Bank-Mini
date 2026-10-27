@@ -1,7 +1,7 @@
 <?php
 
 use App\Enums\AccountCode;
-use App\Enums\CashTransferStatus;
+use App\Enums\CashCountStage;
 use App\Enums\Position;
 use App\Enums\ReportStatus;
 use App\Enums\TransactionTypes;
@@ -16,11 +16,13 @@ use Illuminate\Support\Facades\Hash;
 
 test('transaction belongs to a customer and the teller who executed it', function () {
     $teller = User::factory()->teller()->create();
+    $shift = openShiftFor($teller);
     $customer = Customer::factory()->create(['balance' => 50000]);
 
     $transaction = Transaction::create([
         'user_id' => $teller->id,
         'customer_id' => $customer->id,
+        'daily_report_id' => $shift->id,
         'type' => TransactionTypes::DEPOSIT,
         'amount' => 25000,
         'balance_before' => 50000,
@@ -30,14 +32,18 @@ test('transaction belongs to a customer and the teller who executed it', functio
     expect($transaction->fresh()->type)->toBe(TransactionTypes::DEPOSIT)
         ->and($transaction->customer->is($customer))->toBeTrue()
         ->and($transaction->teller->is($teller))->toBeTrue()
+        ->and($transaction->dailyReport->is($shift))->toBeTrue()
+        ->and($shift->transactions)->toHaveCount(1)
         ->and($customer->transactions)->toHaveCount(1)
         ->and($teller->transactions)->toHaveCount(1);
 });
 
 test('journal entries belong to a transaction and cast their enums', function () {
+    $teller = User::factory()->teller()->create();
     $transaction = Transaction::create([
-        'user_id' => User::factory()->teller()->create()->id,
+        'user_id' => $teller->id,
         'customer_id' => Customer::factory()->create()->id,
+        'daily_report_id' => openShiftFor($teller)->id,
         'type' => TransactionTypes::DEPOSIT,
         'amount' => 10000,
         'balance_before' => 0,
@@ -77,15 +83,26 @@ test('daily report links to its teller and reviewing supervisor', function () {
         ->and($supervisor->reviewedDailyReports)->toHaveCount(1);
 });
 
-test('cash transfer defaults to pending and links to its teller', function () {
+test('a shift has its cash counts and at most one transfer to the vault', function () {
     $teller = User::factory()->teller()->create();
+    $supervisor = User::factory()->supervisor()->create();
+    $shift = openShiftFor($teller, 150000);
 
-    $transfer = CashTransfer::create(['teller_id' => $teller->id, 'amount' => 100000]);
+    $transfer = CashTransfer::create([
+        'daily_report_id' => $shift->id,
+        'amount' => 150000,
+        'approved_by' => $supervisor->id,
+        'transferred_at' => now(),
+    ]);
 
-    expect($transfer->fresh()->status)->toBe(CashTransferStatus::PENDING)
-        ->and($transfer->teller->is($teller))->toBeTrue()
-        ->and($transfer->supervisor)->toBeNull()
-        ->and($teller->cashTransfers)->toHaveCount(1);
+    expect($shift->openingCounts()->get()->map->only(['denomination', 'quantity'])->all())->toBe([
+        ['denomination' => 100000, 'quantity' => 1],
+        ['denomination' => 50000, 'quantity' => 1],
+    ])
+        ->and($shift->openingCounts()->first()->stage)->toBe(CashCountStage::OPENING)
+        ->and($shift->cashTransfer->is($transfer))->toBeTrue()
+        ->and($transfer->approver->is($supervisor))->toBeTrue()
+        ->and($supervisor->approvedCashTransfers)->toHaveCount(1);
 });
 
 test('staff password is hashed, cast, and never serialized', function () {

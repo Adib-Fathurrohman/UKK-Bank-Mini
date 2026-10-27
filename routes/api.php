@@ -12,9 +12,9 @@ use App\Http\Controllers\API\SettingsController;
 use App\Http\Controllers\API\Staff\AuthController as StaffAuthController;
 use App\Http\Controllers\API\Supervisor\CashTransferController as SupervisorCashTransferController;
 use App\Http\Controllers\API\Supervisor\DailyReportController as SupervisorDailyReportController;
-use App\Http\Controllers\API\Teller\CashTransferController as TellerCashTransferController;
 use App\Http\Controllers\API\Teller\CustomerLookupController;
 use App\Http\Controllers\API\Teller\DailyReportController as TellerDailyReportController;
+use App\Http\Controllers\API\Teller\ShiftController;
 use App\Http\Controllers\API\Teller\TransactionController as TellerTransactionController;
 use Illuminate\Support\Facades\Route;
 
@@ -84,14 +84,12 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
         Route::post('deposits', [TellerTransactionController::class, 'deposit']);
         Route::post('withdrawals', [TellerTransactionController::class, 'withdraw']);
 
-        Route::get('daily-reports/preview', [TellerDailyReportController::class, 'preview']);
-        Route::get('daily-reports', [TellerDailyReportController::class, 'index']);
-        Route::post('daily-reports', [TellerDailyReportController::class, 'store']);
-        Route::get('daily-reports/{dailyReport}', [TellerDailyReportController::class, 'show']);
+        Route::get('shift', [ShiftController::class, 'show']);
+        Route::post('shift/open', [ShiftController::class, 'open']);
+        Route::post('shift/close', [ShiftController::class, 'close']);
 
-        Route::get('drawer', [TellerCashTransferController::class, 'drawer']);
-        Route::get('cash-transfers', [TellerCashTransferController::class, 'index']);
-        Route::post('cash-transfers', [TellerCashTransferController::class, 'store']);
+        Route::get('daily-reports', [TellerDailyReportController::class, 'index']);
+        Route::get('daily-reports/{dailyReport}', [TellerDailyReportController::class, 'show']);
     });
 
     // Supervisor only
@@ -99,12 +97,12 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
         Route::get('daily-reports', [SupervisorDailyReportController::class, 'index']);
         Route::get('daily-reports/{dailyReport}', [SupervisorDailyReportController::class, 'show']);
         Route::post('daily-reports/{dailyReport}/approve', [SupervisorDailyReportController::class, 'approve'])->name('daily-reports.approve');
+        Route::post('daily-reports/{dailyReport}/hold', [SupervisorDailyReportController::class, 'hold'])->name('daily-reports.hold');
         Route::post('daily-reports/{dailyReport}/reject', [SupervisorDailyReportController::class, 'reject'])->name('daily-reports.reject');
 
+        // Vault ledger: transfers are created by approving a daily report.
         Route::get('cash-transfers', [SupervisorCashTransferController::class, 'index']);
         Route::get('cash-transfers/{cashTransfer}', [SupervisorCashTransferController::class, 'show']);
-        Route::post('cash-transfers/{cashTransfer}/approve', [SupervisorCashTransferController::class, 'approve'])->name('cash-transfers.approve');
-        Route::post('cash-transfers/{cashTransfer}/reject', [SupervisorCashTransferController::class, 'reject'])->name('cash-transfers.reject');
     });
 });
 

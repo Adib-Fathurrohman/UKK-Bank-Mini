@@ -18,6 +18,8 @@ return new class extends Migration
             // The teller who executed the transaction.
             $table->foreignId('user_id')->constrained('users')->onDelete('restrict');
             $table->foreignId('customer_id')->constrained('customers')->onDelete('restrict');
+            // The teller's shift (daily report) the transaction was made in.
+            $table->foreignId('daily_report_id')->constrained('daily_reports')->onDelete('restrict');
             $table->enum('type', array_column(TransactionTypes::cases(), 'value'));
             $table->integer('amount')->unsigned();
             $table->integer('balance_before')->unsigned();

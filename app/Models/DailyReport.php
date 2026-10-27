@@ -2,23 +2,31 @@
 
 namespace App\Models;
 
+use App\Enums\CashCountStage;
 use App\Enums\ReportStatus;
 use Illuminate\Database\Eloquent\Model;
 use LogicException;
 
+/**
+ * One teller's shift (piket) and its end-of-day report.
+ */
 class DailyReport extends Model
 {
     protected $attributes = [
-        'status' => 'draft',
+        'status' => 'open',
     ];
 
     protected $fillable = [
         'teller_id',
         'report_date',
+        'status',
+        'opening_balance',
+        'opened_at',
         'transaction_count',
         'total_deposit',
         'total_withdrawal',
-        'status',
+        'system_balance',
+        'physical_balance',
         'submitted_at',
         'supervisor_id',
         'reviewed_at',
@@ -29,17 +37,21 @@ class DailyReport extends Model
     {
         return [
             'report_date' => 'date',
+            'status' => ReportStatus::class,
+            'opening_balance' => 'integer',
+            'opened_at' => 'datetime',
             'transaction_count' => 'integer',
             'total_deposit' => 'integer',
             'total_withdrawal' => 'integer',
-            'status' => ReportStatus::class,
+            'system_balance' => 'integer',
+            'physical_balance' => 'integer',
             'submitted_at' => 'datetime',
             'reviewed_at' => 'datetime',
         ];
     }
 
     /**
-     * An approved report is final. Rejected reports may be resubmitted.
+     * An approved report is final. Reports are never deleted.
      */
     protected static function booted(): void
     {
@@ -59,5 +71,40 @@ class DailyReport extends Model
     public function supervisor()
     {
         return $this->belongsTo(User::class, 'supervisor_id');
+    }
+
+    public function transactions()
+    {
+        return $this->hasMany(Transaction::class);
+    }
+
+    public function cashCounts()
+    {
+        return $this->hasMany(CashCount::class)->orderByDesc('denomination');
+    }
+
+    public function openingCounts()
+    {
+        return $this->cashCounts()->where('stage', CashCountStage::OPENING);
+    }
+
+    public function closingCounts()
+    {
+        return $this->cashCounts()->where('stage', CashCountStage::CLOSING);
+    }
+
+    public function cashTransfer()
+    {
+        return $this->hasOne(CashTransfer::class);
+    }
+
+    /**
+     * Physical cash minus system balance; null until the shift is closed.
+     */
+    public function difference(): ?int
+    {
+        return $this->physical_balance === null || $this->system_balance === null
+            ? null
+            : $this->physical_balance - $this->system_balance;
     }
 }

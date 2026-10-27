@@ -10,8 +10,19 @@ beforeEach(function () {
     $this->customer = Customer::factory()->create(['account_number' => '1000000001', 'balance' => 50000]);
 });
 
-test('deposit adds to the balance and records who executed it', function () {
+/**
+ * A logged-in teller with today's shift open.
+ */
+function tellerOnShift(): App\Models\User
+{
     $teller = actingAsStaff(UserRoles::TELLER);
+    openShiftFor($teller);
+
+    return $teller;
+}
+
+test('deposit adds to the balance and records who executed it', function () {
+    $teller = tellerOnShift();
 
     $this->postJson('/api/teller/deposits', ['account_number' => '1000000001', 'amount' => 25000])
         ->assertCreated()
@@ -23,11 +34,41 @@ test('deposit adds to the balance and records who executed it', function () {
 
     $transaction = Transaction::sole();
     expect($this->customer->fresh()->balance)->toBe(75000)
-        ->and($transaction->teller->is($teller))->toBeTrue();
+        ->and($transaction->teller->is($teller))->toBeTrue()
+        ->and($transaction->dailyReport->teller_id)->toBe($teller->id);
+});
+
+test('transactions are refused until the teller opens a shift', function () {
+    actingAsStaff(UserRoles::TELLER);
+
+    $this->postJson('/api/teller/deposits', ['account_number' => '1000000001', 'amount' => 10000])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', fn ($message) => str_contains($message, 'Buka shift'));
+
+    expect(Transaction::count())->toBe(0);
+});
+
+test('transactions are refused after the shift is closed', function () {
+    $teller = tellerOnShift();
+    closeShiftFor($teller);
+
+    $this->postJson('/api/teller/deposits', ['account_number' => '1000000001', 'amount' => 10000])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', fn ($message) => str_contains($message, 'sudah ditutup'));
+});
+
+test('transactions are refused while yesterday\'s shift is still open', function () {
+    $this->travelTo(now()->subDay());
+    $teller = tellerOnShift();
+    $this->travelBack();
+
+    $this->postJson('/api/teller/deposits', ['account_number' => '1000000001', 'amount' => 10000])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', fn ($message) => str_contains($message, 'belum ditutup'));
 });
 
 test('withdrawal subtracts from the balance', function () {
-    actingAsStaff(UserRoles::TELLER);
+    tellerOnShift();
 
     $this->postJson('/api/teller/withdrawals', ['account_number' => '1000000001', 'amount' => 30000])
         ->assertCreated()
@@ -38,7 +79,7 @@ test('withdrawal subtracts from the balance', function () {
 });
 
 test('withdrawal may leave exactly the minimum balance', function () {
-    actingAsStaff(UserRoles::TELLER);
+    tellerOnShift();
 
     $this->postJson('/api/teller/withdrawals', ['account_number' => '1000000001', 'amount' => 40000])->assertCreated();
 
@@ -46,7 +87,7 @@ test('withdrawal may leave exactly the minimum balance', function () {
 });
 
 test('withdrawal below the minimum balance is rejected and nothing is saved', function () {
-    actingAsStaff(UserRoles::TELLER);
+    tellerOnShift();
 
     $this->postJson('/api/teller/withdrawals', ['account_number' => '1000000001', 'amount' => 40001])
         ->assertUnprocessable()
@@ -59,13 +100,13 @@ test('withdrawal below the minimum balance is rejected and nothing is saved', fu
 
 test('the minimum balance is configurable', function () {
     config(['bank.min_balance' => 0]);
-    actingAsStaff(UserRoles::TELLER);
+    tellerOnShift();
 
     $this->postJson('/api/teller/withdrawals', ['account_number' => '1000000001', 'amount' => 50000])->assertCreated();
 });
 
 test('zero and negative amounts are rejected', function (int $amount) {
-    actingAsStaff(UserRoles::TELLER);
+    tellerOnShift();
 
     $this->postJson('/api/teller/deposits', ['account_number' => '1000000001', 'amount' => $amount])
         ->assertUnprocessable()
@@ -75,7 +116,7 @@ test('zero and negative amounts are rejected', function (int $amount) {
 })->with([0, -5000]);
 
 test('suspended accounts cannot transact', function () {
-    actingAsStaff(UserRoles::TELLER);
+    tellerOnShift();
     $this->customer->update(['account_status' => 'suspended']);
 
     $this->postJson('/api/teller/deposits', ['account_number' => '1000000001', 'amount' => 10000])->assertUnprocessable();
@@ -84,7 +125,7 @@ test('suspended accounts cannot transact', function () {
 });
 
 test('closed accounts cannot transact', function () {
-    actingAsStaff(UserRoles::TELLER);
+    tellerOnShift();
     $this->customer->update(['account_status' => 'inactive']);
     $this->customer->delete();
 
@@ -111,7 +152,7 @@ test('customers cannot create transactions for themselves', function () {
 });
 
 test('if writing the journal fails, the balance and transaction are rolled back', function () {
-    actingAsStaff(UserRoles::TELLER);
+    tellerOnShift();
     $this->mock(JournalService::class)
         ->shouldReceive('record')
         ->andThrow(new RuntimeException('Simulated journal failure'));
@@ -124,10 +165,11 @@ test('if writing the journal fails, the balance and transaction are rolled back'
 });
 
 test('teller sees only their own transactions for the requested day', function () {
-    $teller = actingAsStaff(UserRoles::TELLER);
+    $teller = tellerOnShift();
     $this->postJson('/api/teller/deposits', ['account_number' => '1000000001', 'amount' => 10000])->assertCreated();
 
     $otherTeller = App\Models\User::factory()->teller()->create();
+    openShiftFor($otherTeller);
     app(App\Services\TransactionService::class)->deposit($this->customer, 5000, $otherTeller);
 
     $this->getJson('/api/teller/transactions')
@@ -141,7 +183,7 @@ test('teller sees only their own transactions for the requested day', function (
 });
 
 test('recorded transactions cannot be edited or deleted', function () {
-    actingAsStaff(UserRoles::TELLER);
+    tellerOnShift();
     $this->postJson('/api/teller/deposits', ['account_number' => '1000000001', 'amount' => 10000])->assertCreated();
     $transaction = Transaction::sole();
 

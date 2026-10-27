@@ -2,58 +2,44 @@
 
 namespace App\Models;
 
-use App\Enums\CashTransferStatus;
 use Illuminate\Database\Eloquent\Model;
 use LogicException;
 
 /**
- * Physical cash moved from a teller's drawer to the main vault, authorized by a supervisor.
+ * Closing cash of a shift moved from the teller's drawer to the main vault.
+ * Created automatically when a supervisor approves the daily report, and
+ * never changed afterwards.
  */
 class CashTransfer extends Model
 {
-    protected $attributes = [
-        'status' => 'pending',
-    ];
-
     protected $fillable = [
-        'teller_id',
+        'daily_report_id',
         'amount',
-        'status',
-        'note',
-        'supervisor_id',
-        'reviewed_at',
-        'supervisor_note',
+        'approved_by',
+        'transferred_at',
     ];
 
     protected function casts(): array
     {
         return [
             'amount' => 'integer',
-            'status' => CashTransferStatus::class,
-            'reviewed_at' => 'datetime',
+            'transferred_at' => 'datetime',
         ];
     }
 
-    /**
-     * Only a pending transfer can change (to approved or rejected); after that it is final.
-     */
     protected static function booted(): void
     {
-        static::updating(function (CashTransfer $transfer) {
-            if ($transfer->getOriginal('status') !== CashTransferStatus::PENDING) {
-                throw new LogicException('Pemindahan kas yang sudah diproses tidak dapat diubah.');
-            }
-        });
+        static::updating(fn () => throw new LogicException('Pemindahan kas tidak dapat diubah.'));
         static::deleting(fn () => throw new LogicException('Pemindahan kas tidak dapat dihapus.'));
     }
 
-    public function teller()
+    public function dailyReport()
     {
-        return $this->belongsTo(User::class, 'teller_id');
+        return $this->belongsTo(DailyReport::class);
     }
 
-    public function supervisor()
+    public function approver()
     {
-        return $this->belongsTo(User::class, 'supervisor_id');
+        return $this->belongsTo(User::class, 'approved_by');
     }
 }

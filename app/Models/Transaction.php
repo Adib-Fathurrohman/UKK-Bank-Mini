@@ -14,6 +14,7 @@ class Transaction extends Model
     protected $fillable = [
         'user_id',
         'customer_id',
+        'daily_report_id',
         'type',
         'amount',
         'balance_before',
@@ -50,6 +51,11 @@ class Transaction extends Model
     public function teller()
     {
         return $this->belongsTo(User::class, 'user_id');
+    }
+
+    public function dailyReport()
+    {
+        return $this->belongsTo(DailyReport::class);
     }
 
     public function accountingJournals()

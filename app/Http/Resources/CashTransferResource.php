@@ -22,19 +22,19 @@ class CashTransferResource extends JsonResource
             'source' => 'teller_drawer',
             'destination' => 'main_vault',
             'amount' => $this->amount,
-            'status' => $this->status,
-            'note' => $this->note,
-            'created_at' => $this->created_at,
-            'reviewed_at' => $this->reviewed_at,
-            'supervisor_note' => $this->supervisor_note,
-            'teller' => $this->whenLoaded('teller', fn () => [
-                'id' => $this->teller->id,
-                'full_name' => $this->teller->full_name,
+            'transferred_at' => $this->transferred_at,
+            'daily_report' => $this->whenLoaded('dailyReport', fn () => [
+                'id' => $this->dailyReport->id,
+                'report_date' => $this->dailyReport->report_date->toDateString(),
+                'teller' => $this->dailyReport->relationLoaded('teller') ? [
+                    'id' => $this->dailyReport->teller->id,
+                    'full_name' => $this->dailyReport->teller->full_name,
+                ] : null,
             ]),
-            'supervisor' => $this->whenLoaded('supervisor', fn () => $this->supervisor ? [
-                'id' => $this->supervisor->id,
-                'full_name' => $this->supervisor->full_name,
-            ] : null),
+            'approved_by' => $this->whenLoaded('approver', fn () => [
+                'id' => $this->approver->id,
+                'full_name' => $this->approver->full_name,
+            ]),
         ];
     }
 }

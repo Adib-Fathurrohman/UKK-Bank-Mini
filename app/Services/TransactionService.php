@@ -5,7 +5,6 @@ namespace App\Services;
 use App\Enums\AccountStatus;
 use App\Enums\TransactionTypes;
 use App\Exceptions\AccountNotActiveException;
-use App\Exceptions\CounterClosedException;
 use App\Exceptions\InsufficientBalanceException;
 use App\Models\Customer;
 use App\Models\Transaction;
@@ -45,13 +44,9 @@ class TransactionService
         }
 
         return DB::transaction(function () use ($type, $customer, $amount, $teller) {
-            // Locks are always taken teller first, then customer, to avoid deadlocks.
-            // The teller lock serializes this with closing the counter (DailyReportService::submit).
-            User::whereKey($teller->id)->lockForUpdate()->first();
-
-            if ($this->reports->isCounterClosed($teller, now())) {
-                throw new CounterClosedException();
-            }
+            // Locks are always taken teller, shift, then customer, to avoid deadlocks.
+            // The teller and shift locks keep the shift from closing halfway through.
+            $shift = $this->reports->shiftForTransaction($teller);
 
             // Re-read the balance under a row lock so two tellers serving the same
             // customer at once cannot both start from the same old balance.
@@ -76,6 +71,7 @@ class TransactionService
 
             $transaction = $customer->transactions()->create([
                 'user_id' => $teller->id,
+                'daily_report_id' => $shift->id,
                 'type' => $type,
                 'amount' => $amount,
                 'balance_before' => $balanceBefore,

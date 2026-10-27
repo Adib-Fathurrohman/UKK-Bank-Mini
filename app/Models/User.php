@@ -57,13 +57,8 @@ class User extends Authenticatable
         return $this->hasMany(DailyReport::class, 'supervisor_id');
     }
 
-    public function cashTransfers()
+    public function approvedCashTransfers()
     {
-        return $this->hasMany(CashTransfer::class, 'teller_id');
-    }
-
-    public function reviewedCashTransfers()
-    {
-        return $this->hasMany(CashTransfer::class, 'supervisor_id');
+        return $this->hasMany(CashTransfer::class, 'approved_by');
     }
 }

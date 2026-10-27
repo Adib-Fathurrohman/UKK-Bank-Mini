@@ -13,16 +13,15 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Validation\Rule;
 
+/**
+ * Verification of teller shifts, one report at a time (no bulk approval).
+ */
 class DailyReportController extends Controller
 {
     public function __construct(private DailyReportService $reports)
     {
     }
 
-    /**
-     * Reports waiting for (or past) review. Drafts are never stored, so every
-     * listed report has been submitted at least once.
-     */
     public function index(Request $request): AnonymousResourceCollection
     {
         $request->validate([
@@ -40,27 +39,36 @@ class DailyReportController extends Controller
             ->latest('submitted_at')
             ->paginate($this->perPage($request));
 
-        return DailyReportResource::collection($reports);
+        return DailyReportResource::collection($reports->through(fn ($report) => $this->reports->withLiveTotals($report)));
     }
 
     /**
-     * One report together with the transactions it summarizes, for verification.
+     * One report with its cash counts and the transactions it summarizes, so the
+     * supervisor can compare it with the slips and the physical cash.
      */
     public function show(DailyReport $dailyReport): DailyReportResource
     {
-        $transactions = $dailyReport->teller->transactions()
-            ->with('customer')
-            ->whereBetween('created_at', [$dailyReport->report_date->copy()->startOfDay(), $dailyReport->report_date->copy()->endOfDay()])
-            ->oldest('id')
-            ->get();
+        $this->reports->withLiveTotals($dailyReport)
+            ->load(['teller', 'supervisor', 'openingCounts', 'closingCounts', 'cashTransfer']);
 
-        return (new DailyReportResource($dailyReport->load(['teller', 'supervisor'])))
-            ->additional(['transactions' => TransactionResource::collection($transactions)]);
+        return (new DailyReportResource($dailyReport))->additional([
+            'transactions' => TransactionResource::collection($dailyReport->transactions()->with('customer')->oldest('id')->get()),
+        ]);
     }
 
+    /**
+     * Approving also books the counted cash from the teller's drawer to the vault.
+     */
     public function approve(ReviewRequest $request, DailyReport $dailyReport): DailyReportResource
     {
         $report = $this->reports->approve($dailyReport, $request->user(), $request->validated('note'));
+
+        return new DailyReportResource($report->load(['teller', 'supervisor', 'cashTransfer']));
+    }
+
+    public function hold(ReviewRequest $request, DailyReport $dailyReport): DailyReportResource
+    {
+        $report = $this->reports->hold($dailyReport, $request->user(), $request->validated('note'));
 
         return new DailyReportResource($report->load(['teller', 'supervisor']));
     }

@@ -11,6 +11,7 @@ use App\Services\TransactionService;
 
 beforeEach(function () {
     $this->teller = User::factory()->teller()->create();
+    openShiftFor($this->teller);
     $this->customer = Customer::factory()->create(['balance' => 100000]);
     $this->service = app(TransactionService::class);
 });
