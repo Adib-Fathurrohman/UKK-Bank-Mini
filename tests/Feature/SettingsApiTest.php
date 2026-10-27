@@ -52,6 +52,6 @@ test('withdrawals use the minimum balance set by the administrator', function ()
     openShiftFor($teller);
     $customer = Customer::factory()->create(['balance' => 50000]);
 
-    expect(fn () => app(TransactionService::class)->withdraw($customer, 25000, $teller))
+    expect(fn () => app(TransactionService::class)->withdraw($customer, 25000, $teller, '123456'))
         ->toThrow(App\Exceptions\InsufficientBalanceException::class);
 });

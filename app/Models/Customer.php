@@ -31,6 +31,8 @@ class Customer extends Authenticatable
         'group',
         'account_status',
         'pin',
+        'pin_failed_attempts',
+        'pin_locked_until',
         'balance',
     ];
 
@@ -43,6 +45,8 @@ class Customer extends Authenticatable
         return [
             'account_status' => AccountStatus::class,
             'pin' => 'hashed',
+            'pin_failed_attempts' => 'integer',
+            'pin_locked_until' => 'datetime',
             'balance' => 'integer',
         ];
     }

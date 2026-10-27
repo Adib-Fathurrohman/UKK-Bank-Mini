@@ -29,6 +29,8 @@ class CustomerSummaryResource extends JsonResource
             'major_name' => $this->whenLoaded('major', fn () => $this->major->major_name),
             'account_status' => $this->account_status,
             'balance' => $this->balance,
+            // Withdrawals are refused until then after too many wrong PINs.
+            'pin_locked_until' => $this->pin_locked_until?->isFuture() ? $this->pin_locked_until : null,
         ];
     }
 }

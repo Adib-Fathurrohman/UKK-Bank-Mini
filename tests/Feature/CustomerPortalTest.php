@@ -21,7 +21,7 @@ beforeEach(function () {
     closeShiftFor($teller);
     $this->travelTo(Carbon::parse('2026-10-23 09:00:00'));
     openShiftFor($teller);
-    $service->withdraw($this->customer, 30000, $teller);
+    $service->withdraw($this->customer, 30000, $teller, '123456');
     $this->otherTransaction = $service->deposit($this->other, 500000, $teller);
     $this->travelTo(Carbon::parse('2026-10-23 10:00:00'));
 

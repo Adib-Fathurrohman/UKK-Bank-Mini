@@ -100,7 +100,7 @@ test('yesterday\'s shift must be closed before a new one opens', function () {
 test('the current shift shows live totals and its transactions', function () {
     openShiftFor($this->teller, 50000);
     $this->transactions->deposit($this->customer, 30000, $this->teller);
-    $this->transactions->withdraw($this->customer, 10000, $this->teller);
+    $this->transactions->withdraw($this->customer, 10000, $this->teller, '123456');
     Sanctum::actingAs($this->teller);
 
     $this->getJson('/api/teller/shift')
@@ -156,7 +156,7 @@ test('totals only include the teller\'s own shift', function () {
 test('closing with matching cash submits the report', function () {
     openShiftFor($this->teller, 50000);
     $this->transactions->deposit($this->customer, 30000, $this->teller);
-    $this->transactions->withdraw($this->customer, 10000, $this->teller);
+    $this->transactions->withdraw($this->customer, 10000, $this->teller, '123456');
     Sanctum::actingAs($this->teller);
     $this->travelTo(Carbon::parse('2026-10-23 14:00:00'));
 

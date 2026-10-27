@@ -17,7 +17,9 @@ beforeEach(function () {
 });
 
 test('each transaction creates exactly two opposite journal lines with the same amount', function (string $method) {
-    $transaction = $this->service->{$method}($this->customer, 20000, $this->teller);
+    $transaction = $method === 'withdraw'
+        ? $this->service->withdraw($this->customer, 20000, $this->teller, '123456')
+        : $this->service->deposit($this->customer, 20000, $this->teller);
 
     $journals = $transaction->accountingJournals()->get();
 
@@ -38,7 +40,7 @@ test('a deposit debits cash and credits customer savings', function () {
 });
 
 test('a withdrawal debits customer savings and credits cash', function () {
-    $transaction = $this->service->withdraw($this->customer, 20000, $this->teller);
+    $transaction = $this->service->withdraw($this->customer, 20000, $this->teller, '123456');
 
     $debit = $transaction->accountingJournals()->where('position', Position::DEBIT)->sole();
     $credit = $transaction->accountingJournals()->where('position', Position::CREDIT)->sole();
@@ -67,7 +69,7 @@ test('tellers and customers cannot read the journal', function () {
 
 test('the journal can be filtered by transaction, account, position and date', function () {
     $first = $this->service->deposit($this->customer, 20000, $this->teller);
-    $this->service->withdraw($this->customer, 5000, $this->teller);
+    $this->service->withdraw($this->customer, 5000, $this->teller, '123456');
     actingAsStaff(UserRoles::SUPERVISOR);
 
     $this->getJson("/api/audit/journals?transaction_id={$first->id}")->assertJsonCount(2, 'data');
@@ -81,7 +83,7 @@ test('the journal can be filtered by transaction, account, position and date', f
 
 test('the journal summary is balanced and totals each account', function () {
     $this->service->deposit($this->customer, 20000, $this->teller);
-    $this->service->withdraw($this->customer, 5000, $this->teller);
+    $this->service->withdraw($this->customer, 5000, $this->teller, '123456');
     actingAsStaff(UserRoles::ADMIN);
 
     $this->getJson('/api/audit/journals/summary')

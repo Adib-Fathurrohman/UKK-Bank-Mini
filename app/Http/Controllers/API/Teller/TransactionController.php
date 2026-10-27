@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API\Teller;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Teller\StoreTransactionRequest;
+use App\Http\Requests\Teller\WithdrawalRequest;
 use App\Http\Resources\TransactionResource;
 use App\Models\Customer;
 use App\Services\TransactionService;
@@ -44,12 +45,13 @@ class TransactionController extends Controller
         ));
     }
 
-    public function withdraw(StoreTransactionRequest $request): TransactionResource
+    public function withdraw(WithdrawalRequest $request): TransactionResource
     {
         return new TransactionResource($this->transactions->withdraw(
             $this->customerFrom($request),
             $request->integer('amount'),
             $request->user(),
+            $request->validated('pin'),
         ));
     }
 

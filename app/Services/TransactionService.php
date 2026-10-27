@@ -24,6 +24,7 @@ class TransactionService
         private JournalService $journals,
         private DailyReportService $reports,
         private SettingsService $settings,
+        private PinService $pins,
     ) {
     }
 
@@ -32,8 +33,13 @@ class TransactionService
         return $this->record(TransactionTypes::DEPOSIT, $customer, $amount, $teller);
     }
 
-    public function withdraw(Customer $customer, int $amount, User $teller): Transaction
+    /**
+     * The customer authorizes a withdrawal by typing their PIN at the counter (soal 1d).
+     */
+    public function withdraw(Customer $customer, int $amount, User $teller, string $pin): Transaction
     {
+        $this->pins->verify($customer, $pin);
+
         return $this->record(TransactionTypes::WITHDRAWAL, $customer, $amount, $teller);
     }
 

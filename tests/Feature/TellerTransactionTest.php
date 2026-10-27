@@ -70,7 +70,7 @@ test('transactions are refused while yesterday\'s shift is still open', function
 test('withdrawal subtracts from the balance', function () {
     tellerOnShift();
 
-    $this->postJson('/api/teller/withdrawals', ['account_number' => '1000000001', 'amount' => 30000])
+    $this->postJson('/api/teller/withdrawals', ['account_number' => '1000000001', 'amount' => 30000, 'pin' => '123456'])
         ->assertCreated()
         ->assertJsonPath('data.type', 'withdrawal')
         ->assertJsonPath('data.balance_after', 20000);
@@ -81,7 +81,7 @@ test('withdrawal subtracts from the balance', function () {
 test('withdrawal may leave exactly the minimum balance', function () {
     tellerOnShift();
 
-    $this->postJson('/api/teller/withdrawals', ['account_number' => '1000000001', 'amount' => 40000])->assertCreated();
+    $this->postJson('/api/teller/withdrawals', ['account_number' => '1000000001', 'amount' => 40000, 'pin' => '123456'])->assertCreated();
 
     expect($this->customer->fresh()->balance)->toBe(10000);
 });
@@ -89,7 +89,7 @@ test('withdrawal may leave exactly the minimum balance', function () {
 test('withdrawal below the minimum balance is rejected and nothing is saved', function () {
     tellerOnShift();
 
-    $this->postJson('/api/teller/withdrawals', ['account_number' => '1000000001', 'amount' => 40001])
+    $this->postJson('/api/teller/withdrawals', ['account_number' => '1000000001', 'amount' => 40001, 'pin' => '123456'])
         ->assertUnprocessable()
         ->assertJsonPath('message', fn ($message) => str_contains($message, 'Rp40.000'));
 
@@ -102,7 +102,7 @@ test('the minimum balance is configurable', function () {
     config(['bank.min_balance' => 0]);
     tellerOnShift();
 
-    $this->postJson('/api/teller/withdrawals', ['account_number' => '1000000001', 'amount' => 50000])->assertCreated();
+    $this->postJson('/api/teller/withdrawals', ['account_number' => '1000000001', 'amount' => 50000, 'pin' => '123456'])->assertCreated();
 });
 
 test('zero and negative amounts are rejected', function (int $amount) {
@@ -142,7 +142,7 @@ test('only tellers can execute transactions', function (UserRoles $role) {
     actingAsStaff($role);
 
     $this->postJson('/api/teller/deposits', ['account_number' => '1000000001', 'amount' => 10000])->assertForbidden();
-    $this->postJson('/api/teller/withdrawals', ['account_number' => '1000000001', 'amount' => 10000])->assertForbidden();
+    $this->postJson('/api/teller/withdrawals', ['account_number' => '1000000001', 'amount' => 10000, 'pin' => '123456'])->assertForbidden();
 })->with([UserRoles::ADMIN, UserRoles::SUPERVISOR]);
 
 test('customers cannot create transactions for themselves', function () {

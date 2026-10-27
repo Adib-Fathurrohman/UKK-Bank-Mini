@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API\Admin;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\StoreCustomerRequest;
 use App\Http\Requests\Admin\UpdateCustomerRequest;
+use App\Http\Resources\CustomerCardResource;
 use App\Http\Resources\CustomerResource;
 use App\Models\Customer;
 use App\Services\CustomerService;
@@ -56,9 +57,24 @@ class CustomerController extends Controller
 
     public function update(UpdateCustomerRequest $request, Customer $customer): CustomerResource
     {
-        $customer->update($request->validated());
+        $data = $request->validated();
+
+        // A PIN reset by the administrator also lifts a lock from wrong attempts.
+        if (array_key_exists('pin', $data)) {
+            $data += ['pin_failed_attempts' => 0, 'pin_locked_until' => null];
+        }
+
+        $customer->update($data);
 
         return new CustomerResource($customer->load('major'));
+    }
+
+    /**
+     * Data for printing the customer's card with its QR code.
+     */
+    public function card(Customer $customer): CustomerCardResource
+    {
+        return new CustomerCardResource($customer->load('major'));
     }
 
     /**

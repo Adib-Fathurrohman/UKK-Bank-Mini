@@ -23,6 +23,9 @@ return new class extends Migration
             $table->enum('group', ['1', '2', '3', '4']);
             $table->enum('account_status', array_column(AccountStatus::cases(), 'value'))->default(AccountStatus::ACTIVE->value);
             $table->string('pin');
+            // Wrong PINs in a row; reaching the limit locks withdrawals until pin_locked_until.
+            $table->tinyInteger('pin_failed_attempts')->unsigned()->default(0);
+            $table->timestamp('pin_locked_until')->nullable();
             $table->integer('balance')->default(0);
             $table->timestamps();
         });

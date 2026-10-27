@@ -58,6 +58,7 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
         Route::post('customers', [CustomerController::class, 'store']);
         Route::match(['put', 'patch'], 'customers/{customer}', [CustomerController::class, 'update']);
         Route::post('customers/{customer}/deactivate', [CustomerController::class, 'deactivate']);
+        Route::get('customers/{customer}/card', [CustomerController::class, 'card']);
     });
 
     // Administrator and Supervisor: read-only staff and account lists, audit trail
@@ -117,6 +118,8 @@ Route::middleware(['auth:sanctum', 'customer'])->prefix('customer')->group(funct
     Route::post('logout', [CustomerAuthController::class, 'logout']);
 
     Route::get('balance', [CustomerAccountController::class, 'balance']);
+    Route::get('card', [CustomerAccountController::class, 'card']);
+    Route::post('pin', [CustomerAccountController::class, 'changePin']);
     Route::get('transactions', [CustomerAccountController::class, 'transactions']);
     Route::get('transactions/{transaction}', [CustomerAccountController::class, 'transaction'])->whereNumber('transaction');
 });

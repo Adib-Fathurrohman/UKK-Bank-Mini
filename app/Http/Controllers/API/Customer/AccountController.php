@@ -4,7 +4,9 @@ namespace App\Http\Controllers\API\Customer;
 
 use App\Enums\TransactionTypes;
 use App\Http\Controllers\Controller;
+use App\Http\Resources\CustomerCardResource;
 use App\Http\Resources\StatementLineResource;
+use App\Services\PinService;
 use App\Services\SettingsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -31,6 +33,29 @@ class AccountController extends Controller
                 'as_of' => now(),
             ],
         ]);
+    }
+
+    /**
+     * The digital card with the QR code the teller scans at the counter.
+     */
+    public function card(Request $request): CustomerCardResource
+    {
+        return new CustomerCardResource($request->user()->load('major'));
+    }
+
+    /**
+     * Change the PIN. Wrong current PINs count towards the same lock as withdrawals.
+     */
+    public function changePin(Request $request, PinService $pins): JsonResponse
+    {
+        $data = $request->validate([
+            'current_pin' => ['required', 'string', 'digits:6'],
+            'new_pin' => ['required', 'string', 'digits:6', 'different:current_pin', 'confirmed'],
+        ]);
+
+        $pins->change($request->user(), $data['current_pin'], $data['new_pin']);
+
+        return response()->json(['message' => 'PIN berhasil diubah.']);
     }
 
     public function transactions(Request $request): AnonymousResourceCollection

@@ -18,6 +18,7 @@ $endpoints = [
     'change settings' => ['PATCH', '/api/admin/settings', ['admin']],
     'open account' => ['POST', '/api/admin/customers', ['admin']],
     'close account' => ['POST', '/api/admin/customers/1/deactivate', ['admin']],
+    'print customer card' => ['GET', '/api/admin/customers/1/card', ['admin']],
     'read accounts' => ['GET', '/api/customers', ['admin', 'supervisor']],
     'read journal' => ['GET', '/api/audit/journals', ['admin', 'supervisor']],
     'journal summary' => ['GET', '/api/audit/journals/summary', ['admin', 'supervisor']],
@@ -36,6 +37,8 @@ $endpoints = [
     'vault ledger' => ['GET', '/api/supervisor/cash-transfers', ['supervisor']],
     'own balance' => ['GET', '/api/customer/balance', ['customer']],
     'own statement' => ['GET', '/api/customer/transactions', ['customer']],
+    'own card' => ['GET', '/api/customer/card', ['customer']],
+    'change own PIN' => ['POST', '/api/customer/pin', ['customer']],
 ];
 
 test('each endpoint is reachable only by its allowed actors', function (string $method, string $uri, array $allowed, string $actor) {
