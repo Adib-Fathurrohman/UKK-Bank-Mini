@@ -24,6 +24,7 @@ class TransactionService
     public function __construct(
         private JournalService $journals,
         private DailyReportService $reports,
+        private SettingsService $settings,
     ) {
     }
 
@@ -65,7 +66,7 @@ class TransactionService
                 ? $balanceBefore + $amount
                 : $balanceBefore - $amount;
 
-            $minBalance = config('bank.min_balance');
+            $minBalance = $this->settings->minBalance();
 
             if ($type === TransactionTypes::WITHDRAWAL && $balanceAfter < $minBalance) {
                 throw new InsufficientBalanceException($minBalance, max($balanceBefore - $minBalance, 0));

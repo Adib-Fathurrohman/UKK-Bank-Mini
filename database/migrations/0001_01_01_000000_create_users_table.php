@@ -17,6 +17,9 @@ return new class extends Migration
             $table->string('username')->unique();
             $table->string('password');
             $table->string('full_name');
+            // Tellers are students on duty (piket): their class and WhatsApp number identify them.
+            $table->string('class', 20)->nullable();
+            $table->string('phone', 20)->nullable();
             $table->enum('role', array_column(UserRoles::cases(),'value'));
             // Staff are deactivated instead of deleted: transactions reference them with ON DELETE RESTRICT.
             $table->boolean('is_active')->default(true);

@@ -26,6 +26,7 @@ class CustomerResource extends JsonResource
             'group' => $this->group,
             'major' => $this->whenLoaded('major', fn () => [
                 'id' => $this->major->id,
+                'code' => $this->major->code,
                 'major_name' => $this->major->major_name,
             ]),
             'account_status' => $this->account_status,

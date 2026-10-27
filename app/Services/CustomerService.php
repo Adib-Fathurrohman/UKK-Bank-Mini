@@ -4,6 +4,9 @@ namespace App\Services;
 
 use App\Enums\AccountStatus;
 use App\Models\Customer;
+use App\Models\Major;
+use App\Support\SchoolYear;
+use Carbon\CarbonInterface;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 
@@ -14,11 +17,13 @@ class CustomerService
      */
     public function create(array $data): Customer
     {
+        $major = Major::findOrFail($data['major_id']);
+
         // Two admins creating accounts at the same moment could compute the same
         // next number; the unique index catches it and we simply try again.
         return retry(3, fn () => Customer::create([
             ...$data,
-            'account_number' => $this->nextAccountNumber(),
+            'account_number' => $this->nextAccountNumber($major, now()),
             'account_status' => AccountStatus::ACTIVE,
             'balance' => 0,
         ]), when: fn ($e) => $e instanceof UniqueConstraintViolationException
@@ -42,12 +47,21 @@ class CustomerService
     }
 
     /**
-     * Account numbers are 10 digits and sequential, including closed accounts.
+     * Account numbers follow "{major code}-{school year}-{serial}", e.g. RPL-2026-001:
+     * the major's code, the school year in which the account is opened, and a
+     * 3-digit serial that restarts for every major and school year. Closed
+     * accounts keep their number, so it is never reused.
      */
-    public function nextAccountNumber(): string
+    public function nextAccountNumber(Major $major, CarbonInterface $openedAt): string
     {
-        $last = Customer::withTrashed()->max('account_number');
+        $prefix = $major->code.'-'.SchoolYear::startYear($openedAt).'-';
 
-        return $last ? (string) ((int) $last + 1) : '1000000001';
+        $lastSerial = Customer::withTrashed()
+            ->where('account_number', 'like', $prefix.'%')
+            ->pluck('account_number')
+            ->map(fn (string $number) => (int) substr($number, strlen($prefix)))
+            ->max() ?? 0;
+
+        return $prefix.str_pad((string) ($lastSerial + 1), 3, '0', STR_PAD_LEFT);
     }
 }

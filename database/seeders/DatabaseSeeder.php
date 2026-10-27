@@ -2,11 +2,11 @@
 
 namespace Database\Seeders;
 
-use App\Enums\AccountStatus;
 use App\Enums\UserRoles;
 use App\Models\Customer;
 use App\Models\Major;
 use App\Models\User;
+use App\Services\CustomerService;
 use App\Services\TransactionService;
 use Illuminate\Database\Seeder;
 
@@ -15,25 +15,26 @@ use Illuminate\Database\Seeder;
  */
 class DatabaseSeeder extends Seeder
 {
-    public function run(TransactionService $transactions): void
+    public function run(TransactionService $transactions, CustomerService $customerService): void
     {
         // =========================
         // MAJORS
         // =========================
 
+        // Codes are used in account numbers, e.g. RPL-2026-001.
         $majors = [
-            'Rekayasa Perangkat Lunak',
-            'Desain Komunikasi Visual',
-            'Manajemen Perkantoran',
-            'Akuntansi dan Keuangan Lembaga',
-            'Layanan Perbankan Syariah',
-            'Bisnis Daring',
-            'Bisnis Retail',
-            'Teknik Komputer dan Jaringan',
+            'RPL' => 'Rekayasa Perangkat Lunak',
+            'DKV' => 'Desain Komunikasi Visual',
+            'MP' => 'Manajemen Perkantoran',
+            'AK' => 'Akuntansi dan Keuangan Lembaga',
+            'LPS' => 'Layanan Perbankan Syariah',
+            'BD' => 'Bisnis Daring',
+            'BR' => 'Bisnis Retail',
+            'TKJ' => 'Teknik Komputer dan Jaringan',
         ];
 
-        foreach ($majors as $major) {
-            Major::firstOrCreate(['major_name' => $major]);
+        foreach ($majors as $code => $name) {
+            Major::updateOrCreate(['major_name' => $name], ['code' => $code]);
         }
 
         // =========================
@@ -59,7 +60,6 @@ class DatabaseSeeder extends Seeder
 
         $customers = [
             [
-                'account_number' => '1000000001',
                 'nis' => '20260001',
                 'full_name' => 'Budi Santoso',
                 'class' => 'X',
@@ -68,7 +68,6 @@ class DatabaseSeeder extends Seeder
                 'opening_balance' => 500000,
             ],
             [
-                'account_number' => '1000000002',
                 'nis' => '20260002',
                 'full_name' => 'Andi Pratama',
                 'class' => 'XI',
@@ -77,7 +76,6 @@ class DatabaseSeeder extends Seeder
                 'opening_balance' => 750000,
             ],
             [
-                'account_number' => '1000000003',
                 'nis' => '20260003',
                 'full_name' => 'Citra Lestari',
                 'class' => 'XII',
@@ -90,19 +88,15 @@ class DatabaseSeeder extends Seeder
         $teller = User::where('username', 'teller')->firstOrFail();
 
         foreach ($customers as $data) {
-            $customer = Customer::withTrashed()->firstOrCreate(
-                ['account_number' => $data['account_number']],
-                [
+            $customer = Customer::withTrashed()->firstWhere('nis', $data['nis'])
+                ?? $customerService->create([
                     'nis' => $data['nis'],
                     'full_name' => $data['full_name'],
                     'class' => $data['class'],
                     'major_id' => Major::where('major_name', $data['major'])->value('id'),
                     'group' => $data['group'],
-                    'account_status' => AccountStatus::ACTIVE,
                     'pin' => '123456',
-                    'balance' => 0,
-                ],
-            );
+                ]);
 
             // Opening balances go through a real teller deposit so the balance,
             // the transaction history and the journal always agree.

@@ -13,6 +13,7 @@ return new class extends Migration
     {
         Schema::create('majors', function (Blueprint $table) {
             $table->id();
+            $table->string('code', 10)->unique();
             $table->string('major_name')->unique();
             $table->timestamps();
         });

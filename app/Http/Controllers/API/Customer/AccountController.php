@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API\Customer;
 use App\Enums\TransactionTypes;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\StatementLineResource;
+use App\Services\SettingsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -16,7 +17,7 @@ use Illuminate\Validation\Rule;
  */
 class AccountController extends Controller
 {
-    public function balance(Request $request): JsonResponse
+    public function balance(Request $request, SettingsService $settings): JsonResponse
     {
         $customer = $request->user();
 
@@ -26,7 +27,7 @@ class AccountController extends Controller
                 'full_name' => $customer->full_name,
                 'account_status' => $customer->account_status,
                 'balance' => $customer->balance,
-                'min_balance' => config('bank.min_balance'),
+                'min_balance' => $settings->minBalance(),
                 'as_of' => now(),
             ],
         ]);

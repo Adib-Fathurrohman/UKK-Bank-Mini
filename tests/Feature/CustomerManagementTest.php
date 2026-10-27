@@ -32,19 +32,52 @@ test('admin can open an account linked to a major', function () {
         ->assertJsonMissingPath('data.pin');
 
     $customer = Customer::firstWhere('nis', '20269999');
-    expect($customer->account_number)->toMatch('/^\d{10}$/')
+    expect($customer->account_number)->toMatch('/^[A-Z]+-\d{4}-\d{3}$/')
         ->and(Hash::check('246810', $customer->pin))->toBeTrue();
 });
 
-test('account numbers are generated sequentially and stay unique', function () {
+test('account numbers combine major code, school year and a serial per major and year', function () {
     actingAsStaff(UserRoles::ADMIN);
-    Customer::factory()->create(['account_number' => '1000000041']);
-    Customer::factory()->create(['account_number' => '1000000042'])->delete();
+    $this->travelTo(Illuminate\Support\Carbon::parse('2026-10-27 09:00:00'));
+    $rpl = Major::factory()->create(['code' => 'RPL']);
+    $tkj = Major::factory()->create(['code' => 'TKJ']);
 
-    $first = $this->postJson('/api/admin/customers', customerPayload(['nis' => '1']))->json('data.account_number');
-    $second = $this->postJson('/api/admin/customers', customerPayload(['nis' => '2']))->json('data.account_number');
+    $numbers = collect([
+        [$rpl, '1'], [$rpl, '2'], [$tkj, '3'],
+    ])->map(fn ($row) => $this->postJson('/api/admin/customers', customerPayload(['major_id' => $row[0]->id, 'nis' => $row[1]]))
+        ->assertCreated()
+        ->json('data.account_number'));
 
-    expect($first)->toBe('1000000043')->and($second)->toBe('1000000044');
+    expect($numbers->all())->toBe(['RPL-2026-001', 'RPL-2026-002', 'TKJ-2026-001']);
+});
+
+test('the school year in the account number starts in July', function () {
+    actingAsStaff(UserRoles::ADMIN);
+    $rpl = Major::factory()->create(['code' => 'RPL']);
+
+    $this->travelTo(Illuminate\Support\Carbon::parse('2027-06-30 12:00:00'));
+    $june = $this->postJson('/api/admin/customers', customerPayload(['major_id' => $rpl->id, 'nis' => '1']))->json('data.account_number');
+
+    $this->travelTo(Illuminate\Support\Carbon::parse('2027-07-01 08:00:00'));
+    $july = $this->postJson('/api/admin/customers', customerPayload(['major_id' => $rpl->id, 'nis' => '2']))->json('data.account_number');
+
+    expect($june)->toBe('RPL-2026-001')->and($july)->toBe('RPL-2027-001');
+});
+
+test('serials continue after closed accounts and past 999', function () {
+    actingAsStaff(UserRoles::ADMIN);
+    $this->travelTo(Illuminate\Support\Carbon::parse('2026-10-27 09:00:00'));
+    $rpl = Major::factory()->create(['code' => 'RPL']);
+    Customer::factory()->create(['major_id' => $rpl->id, 'account_number' => 'RPL-2026-041']);
+    Customer::factory()->create(['major_id' => $rpl->id, 'account_number' => 'RPL-2026-042'])->delete();
+
+    expect($this->postJson('/api/admin/customers', customerPayload(['major_id' => $rpl->id, 'nis' => '1']))->json('data.account_number'))
+        ->toBe('RPL-2026-043');
+
+    Customer::factory()->create(['major_id' => $rpl->id, 'account_number' => 'RPL-2026-999']);
+
+    expect($this->postJson('/api/admin/customers', customerPayload(['major_id' => $rpl->id, 'nis' => '2']))->json('data.account_number'))
+        ->toBe('RPL-2026-1000');
 });
 
 test('the client cannot choose the account number, status or balance', function () {

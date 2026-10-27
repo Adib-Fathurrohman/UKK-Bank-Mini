@@ -14,7 +14,7 @@ class MajorController extends Controller
     public function index(): JsonResponse
     {
         return response()->json([
-            'data' => Major::orderBy('major_name')->get(['id', 'major_name']),
+            'data' => Major::orderBy('major_name')->get(['id', 'code', 'major_name']),
         ]);
     }
 }

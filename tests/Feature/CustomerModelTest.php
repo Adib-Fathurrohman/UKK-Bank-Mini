@@ -6,6 +6,7 @@ use App\Models\Major;
 
 test('customer is related to a major and hides its pin', function () {
     $major = Major::create([
+        'code' => 'RPL',
         'major_name' => 'Rekayasa Perangkat Lunak',
     ]);
 
@@ -28,6 +29,7 @@ test('customer is related to a major and hides its pin', function () {
 
 test('customer can be soft deleted and restored', function () {
     $major = Major::create([
+        'code' => 'AK',
         'major_name' => 'Akuntansi dan Keuangan Lembaga',
     ]);
 

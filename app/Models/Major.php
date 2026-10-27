@@ -10,6 +10,7 @@ class Major extends Model
     use HasFactory;
 
     protected $fillable = [
+        'code',
         'major_name',
     ];
 

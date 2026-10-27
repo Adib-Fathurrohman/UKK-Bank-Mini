@@ -26,7 +26,7 @@ class CustomerFactory extends Factory
     public function definition(): array
     {
         return [
-            'account_number' => fake()->unique()->numerify('10########'),
+            'account_number' => fake()->unique()->numerify('TST-2026-####'),
             'nis' => fake()->unique()->numerify('2026####'),
             'full_name' => fake()->name(),
             'class' => fake()->randomElement(['X', 'XI', 'XII']),

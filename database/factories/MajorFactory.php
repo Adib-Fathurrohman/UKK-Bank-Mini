@@ -18,6 +18,7 @@ class MajorFactory extends Factory
     public function definition(): array
     {
         return [
+            'code' => strtoupper(fake()->unique()->lexify('???')),
             'major_name' => fake()->unique()->words(3, true),
         ];
     }
