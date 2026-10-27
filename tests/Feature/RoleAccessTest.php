@@ -26,6 +26,7 @@ $endpoints = [
     'look up customer' => ['GET', '/api/teller/customers/lookup', ['teller']],
     'deposit' => ['POST', '/api/teller/deposits', ['teller']],
     'withdraw' => ['POST', '/api/teller/withdrawals', ['teller']],
+    'correct transaction' => ['POST', '/api/teller/transactions/1/correct', ['teller']],
     'current shift' => ['GET', '/api/teller/shift', ['teller']],
     'open shift' => ['POST', '/api/teller/shift/open', ['teller']],
     'close shift' => ['POST', '/api/teller/shift/close', ['teller']],

@@ -19,6 +19,10 @@ class Transaction extends Model
         'amount',
         'balance_before',
         'balance_after',
+        'corrects_transaction_id',
+        'authorized_by',
+        'note',
+        'idempotency_key',
     ];
 
     protected $casts = [
@@ -56,6 +60,30 @@ class Transaction extends Model
     public function dailyReport()
     {
         return $this->belongsTo(DailyReport::class);
+    }
+
+    /**
+     * For a correction: the transaction it reverses.
+     */
+    public function corrects()
+    {
+        return $this->belongsTo(Transaction::class, 'corrects_transaction_id');
+    }
+
+    /**
+     * For an ordinary transaction: the correction that reversed it, if any.
+     */
+    public function correction()
+    {
+        return $this->hasOne(Transaction::class, 'corrects_transaction_id');
+    }
+
+    /**
+     * For a correction: the supervisor who authorized it.
+     */
+    public function authorizer()
+    {
+        return $this->belongsTo(User::class, 'authorized_by');
     }
 
     public function accountingJournals()

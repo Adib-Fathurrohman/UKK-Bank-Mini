@@ -2,7 +2,6 @@
 
 namespace App\Http\Resources;
 
-use App\Enums\TransactionTypes;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -24,8 +23,8 @@ class StatementLineResource extends JsonResource
         return [
             'id' => $this->id,
             'type' => $this->type,
-            'direction' => $this->type === TransactionTypes::DEPOSIT ? 'in' : 'out',
-            'description' => $this->type === TransactionTypes::DEPOSIT ? 'Setor tunai' : 'Tarik tunai',
+            'direction' => $this->type->increasesBalance() ? 'in' : 'out',
+            'description' => $this->type->label(),
             'amount' => $this->amount,
             'balance_after' => $this->balance_after,
             'created_at' => $this->created_at,

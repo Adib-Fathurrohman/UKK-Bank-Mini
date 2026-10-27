@@ -84,6 +84,8 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
         Route::get('transactions', [TellerTransactionController::class, 'index']);
         Route::post('deposits', [TellerTransactionController::class, 'deposit']);
         Route::post('withdrawals', [TellerTransactionController::class, 'withdraw']);
+        Route::post('transactions/{transaction}/correct', [TellerTransactionController::class, 'correct'])
+            ->middleware('throttle:10,1');
 
         Route::get('shift', [ShiftController::class, 'show']);
         Route::post('shift/open', [ShiftController::class, 'open']);

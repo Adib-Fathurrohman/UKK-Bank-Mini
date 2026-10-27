@@ -13,6 +13,9 @@ use Illuminate\Database\Eloquent\Collection;
  *
  * Deposit:    Debit 101 Kas,               Credit 201 Tabungan Nasabah
  * Withdrawal: Debit 201 Tabungan Nasabah,  Credit 101 Kas
+ *
+ * A correction reverses the original, so it gets the opposite pair: a deposit
+ * correction is booked like a withdrawal and vice versa.
  */
 class JournalService
 {
@@ -23,16 +26,15 @@ class JournalService
      */
     public static function entriesFor(TransactionTypes $type): array
     {
-        return match ($type) {
-            TransactionTypes::DEPOSIT => [
+        return $type->increasesBalance()
+            ? [
                 ['account_code' => AccountCode::CASH, 'position' => Position::DEBIT],
                 ['account_code' => AccountCode::CUSTOMER_SAVINGS, 'position' => Position::CREDIT],
-            ],
-            TransactionTypes::WITHDRAWAL => [
+            ]
+            : [
                 ['account_code' => AccountCode::CUSTOMER_SAVINGS, 'position' => Position::DEBIT],
                 ['account_code' => AccountCode::CASH, 'position' => Position::CREDIT],
-            ],
-        };
+            ];
     }
 
     public function record(Transaction $transaction): Collection

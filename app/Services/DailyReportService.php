@@ -6,11 +6,13 @@ use App\Enums\CashCountStage;
 use App\Enums\ReportStatus;
 use App\Enums\TransactionTypes;
 use App\Exceptions\CashMismatchException;
+use App\Exceptions\CorrectionNotAllowedException;
 use App\Exceptions\InvalidStatusTransitionException;
 use App\Exceptions\ShiftNotOpenException;
 use App\Models\CashCount;
 use App\Models\CashTransfer;
 use App\Models\DailyReport;
+use App\Models\Transaction;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 
@@ -60,6 +62,24 @@ class DailyReportService
 
         if (! $shift->report_date->isToday()) {
             throw ShiftNotOpenException::fromPastDay($shift->report_date->toDateString());
+        }
+
+        return $shift;
+    }
+
+    /**
+     * The shift a correction belongs to: the same shift as the transaction it
+     * reverses, while that shift is still active (open, or reopened by a
+     * rejection). Locks like shiftForTransaction().
+     */
+    public function shiftForCorrection(User $teller, Transaction $original): DailyReport
+    {
+        User::whereKey($teller->id)->lockForUpdate()->first();
+
+        $shift = $this->activeShift($teller, lock: true);
+
+        if (! $shift || $shift->id !== $original->daily_report_id) {
+            throw new CorrectionNotAllowedException('Koreksi hanya dapat dilakukan pada shift tempat transaksi asli dicatat, selama shift tersebut belum ditutup.');
         }
 
         return $shift;
@@ -154,8 +174,9 @@ class DailyReportService
 
         $sum = fn (TransactionTypes $type) => (int) $totals->get($type->value)?->aggregate_total;
 
-        $deposit = $sum(TransactionTypes::DEPOSIT);
-        $withdrawal = $sum(TransactionTypes::WITHDRAWAL);
+        // Totals are net of corrections: a reversed deposit was never really received.
+        $deposit = $sum(TransactionTypes::DEPOSIT) - $sum(TransactionTypes::DEPOSIT_CORRECTION);
+        $withdrawal = $sum(TransactionTypes::WITHDRAWAL) - $sum(TransactionTypes::WITHDRAWAL_CORRECTION);
 
         return [
             'transaction_count' => (int) $totals->sum('aggregate_count'),

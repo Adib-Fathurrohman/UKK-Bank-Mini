@@ -115,6 +115,25 @@ test('a denomination is counted once per stage', function () {
     }
 })->throws(QueryException::class);
 
+test('a correction must point at the transaction it reverses and its authorizer', function () {
+    insertTransaction(['type' => 'deposit_correction']);
+})->throws(QueryException::class);
+
+test('an ordinary transaction cannot claim to correct another one', function () {
+    $original = insertTransaction();
+
+    insertTransaction(['corrects_transaction_id' => $original]);
+})->throws(QueryException::class);
+
+test('a transaction can only be corrected once', function () {
+    $original = insertTransaction();
+    $supervisorId = User::factory()->supervisor()->create()->id;
+
+    foreach (range(1, 2) as $attempt) {
+        insertTransaction(['type' => 'deposit_correction', 'corrects_transaction_id' => $original, 'authorized_by' => $supervisorId]);
+    }
+})->throws(QueryException::class);
+
 test('every transaction belongs to a shift', function () {
     insertTransaction(['daily_report_id' => null]);
 })->throws(QueryException::class);

@@ -26,3 +26,8 @@ test('withdrawal decreases customer savings and cash', function () {
         ['account_code' => AccountCode::CASH, 'position' => Position::CREDIT],
     ]);
 });
+
+test('corrections are booked opposite to what they reverse', function () {
+    expect(JournalService::entriesFor(TransactionTypes::DEPOSIT_CORRECTION))->toBe(JournalService::entriesFor(TransactionTypes::WITHDRAWAL))
+        ->and(JournalService::entriesFor(TransactionTypes::WITHDRAWAL_CORRECTION))->toBe(JournalService::entriesFor(TransactionTypes::DEPOSIT));
+});
