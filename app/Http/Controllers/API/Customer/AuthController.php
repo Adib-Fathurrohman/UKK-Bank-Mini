@@ -43,6 +43,7 @@ class AuthController extends Controller
 
         return response()->json([
             'data' => [
+                'actor' => 'customer',
                 'token' => $customer->createToken('customer-portal')->plainTextToken,
                 'token_type' => 'Bearer',
                 'customer' => new CustomerResource($customer->load('major')),

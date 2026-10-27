@@ -10,7 +10,12 @@ use Illuminate\Support\Facades\Route;
 */
 
 $endpoints = [
-    'manage staff' => ['GET', '/api/admin/staff', ['admin']],
+    'read staff' => ['GET', '/api/staff', ['admin', 'supervisor']],
+    'create staff' => ['POST', '/api/admin/staff', ['admin']],
+    'block staff' => ['POST', '/api/admin/staff/999/block', ['admin']],
+    'import staff' => ['POST', '/api/admin/staff/import', ['admin']],
+    'read settings' => ['GET', '/api/settings', ['admin', 'supervisor', 'teller']],
+    'change settings' => ['PATCH', '/api/admin/settings', ['admin']],
     'open account' => ['POST', '/api/admin/customers', ['admin']],
     'close account' => ['POST', '/api/admin/customers/1/deactivate', ['admin']],
     'read accounts' => ['GET', '/api/customers', ['admin', 'supervisor']],

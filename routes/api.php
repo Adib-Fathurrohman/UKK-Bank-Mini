@@ -6,7 +6,9 @@ use App\Http\Controllers\API\Audit\JournalController;
 use App\Http\Controllers\API\Audit\TransactionController as AuditTransactionController;
 use App\Http\Controllers\API\Customer\AccountController as CustomerAccountController;
 use App\Http\Controllers\API\Customer\AuthController as CustomerAuthController;
+use App\Http\Controllers\API\LoginController;
 use App\Http\Controllers\API\MajorController;
+use App\Http\Controllers\API\SettingsController;
 use App\Http\Controllers\API\Staff\AuthController as StaffAuthController;
 use App\Http\Controllers\API\Supervisor\CashTransferController as SupervisorCashTransferController;
 use App\Http\Controllers\API\Supervisor\DailyReportController as SupervisorDailyReportController;
@@ -18,28 +20,51 @@ use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
+| Login gateway for all roles
+|--------------------------------------------------------------------------
+| POST /login is the single entry point. The portal-specific endpoints
+| below accept the same credentials and are kept for convenience.
+*/
+
+Route::middleware('throttle:login')->group(function () {
+    Route::post('login', LoginController::class);
+    Route::post('staff/login', [StaffAuthController::class, 'login']);
+    Route::post('customer/login', [CustomerAuthController::class, 'login']);
+});
+
+/*
+|--------------------------------------------------------------------------
 | Staff portal (Administrator, Supervisor, Teller)
 |--------------------------------------------------------------------------
 */
-
-Route::post('staff/login', [StaffAuthController::class, 'login'])->middleware('throttle:login');
 
 Route::middleware(['auth:sanctum', 'staff'])->group(function () {
     Route::get('staff/me', [StaffAuthController::class, 'me']);
     Route::post('staff/logout', [StaffAuthController::class, 'logout']);
     Route::get('majors', [MajorController::class, 'index']);
+    Route::get('settings', [SettingsController::class, 'show']);
 
     // Administrator only
     Route::middleware('staff:admin')->prefix('admin')->group(function () {
-        Route::apiResource('staff', StaffController::class);
+        Route::post('staff', [StaffController::class, 'store']);
+        Route::post('staff/import', [StaffController::class, 'import']);
+        Route::match(['put', 'patch'], 'staff/{staff}', [StaffController::class, 'update']);
+        Route::delete('staff/{staff}', [StaffController::class, 'destroy']);
+        Route::post('staff/{staff}/block', [StaffController::class, 'block']);
+        Route::post('staff/{staff}/unblock', [StaffController::class, 'unblock']);
+
+        Route::match(['put', 'patch'], 'settings', [SettingsController::class, 'update']);
 
         Route::post('customers', [CustomerController::class, 'store']);
         Route::match(['put', 'patch'], 'customers/{customer}', [CustomerController::class, 'update']);
         Route::post('customers/{customer}/deactivate', [CustomerController::class, 'deactivate']);
     });
 
-    // Administrator and Supervisor: read-only account list and audit trail
+    // Administrator and Supervisor: read-only staff and account lists, audit trail
     Route::middleware('staff:admin,supervisor')->group(function () {
+        Route::get('staff', [StaffController::class, 'index']);
+        Route::get('staff/{staff}', [StaffController::class, 'show'])->whereNumber('staff');
+
         Route::get('customers', [CustomerController::class, 'index']);
         Route::get('customers/{customer}', [CustomerController::class, 'show'])->withTrashed();
 
@@ -88,8 +113,6 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
 | Customer portal (Nasabah)
 |--------------------------------------------------------------------------
 */
-
-Route::post('customer/login', [CustomerAuthController::class, 'login'])->middleware('throttle:login');
 
 Route::middleware(['auth:sanctum', 'customer'])->prefix('customer')->group(function () {
     Route::get('me', [CustomerAuthController::class, 'me']);

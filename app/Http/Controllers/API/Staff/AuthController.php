@@ -34,6 +34,7 @@ class AuthController extends Controller
 
         return response()->json([
             'data' => [
+                'actor' => 'staff',
                 'token' => $user->createToken('staff-portal')->plainTextToken,
                 'token_type' => 'Bearer',
                 'user' => new StaffResource($user),

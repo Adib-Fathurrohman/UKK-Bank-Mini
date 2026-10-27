@@ -11,6 +11,8 @@ class UpdateStaffRequest extends FormRequest
     /**
      * Get the validation rules that apply to the request.
      *
+     * Blocking and unblocking have their own endpoints.
+     *
      * @return array<string, mixed>
      */
     public function rules(): array
@@ -20,7 +22,8 @@ class UpdateStaffRequest extends FormRequest
             'full_name' => ['sometimes', 'string', 'max:255'],
             'password' => ['sometimes', 'string', 'min:8'],
             'role' => ['sometimes', Rule::enum(UserRoles::class)->only([UserRoles::TELLER, UserRoles::SUPERVISOR])],
-            'is_active' => ['sometimes', 'boolean'],
+            'class' => ['sometimes', 'nullable', 'string', 'max:20'],
+            'phone' => ['sometimes', 'nullable', 'string', 'max:20', 'regex:/^[0-9+\-\s]+$/'],
         ];
     }
 }

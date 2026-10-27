@@ -86,7 +86,7 @@ test('customer cannot reach staff, teller or audit endpoints', function (string 
     ['POST', '/api/teller/deposits'],
     ['GET', '/api/audit/journals'],
     ['GET', '/api/customers'],
-    ['GET', '/api/admin/staff'],
+    ['GET', '/api/staff'],
 ]);
 
 test('staff cannot use the customer portal', function () {

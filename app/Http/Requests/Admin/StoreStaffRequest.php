@@ -21,6 +21,8 @@ class StoreStaffRequest extends FormRequest
             'password' => ['required', 'string', 'min:8'],
             // Administrators can only create tellers and supervisors (FR-Usr-01).
             'role' => ['required', Rule::enum(UserRoles::class)->only([UserRoles::TELLER, UserRoles::SUPERVISOR])],
+            'class' => ['nullable', 'string', 'max:20'],
+            'phone' => ['nullable', 'string', 'max:20', 'regex:/^[0-9+\-\s]+$/'],
         ];
     }
 }
