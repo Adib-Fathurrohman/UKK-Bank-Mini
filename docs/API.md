@@ -1,8 +1,9 @@
 # E-Teller Bank Mini — API Reference
 
-REST API for the school mini bank: staff portal (Administrator, Supervisor, Teller)
-and customer portal (students). All examples below are real responses captured
-from the seeded demo database.
+REST API for the school mini bank. One login gateway serves four roles:
+Administrator, Supervisor and Teller (staff web app) and Nasabah (customer
+mobile app). All examples are real responses captured from the seeded demo
+database; long lists are shortened.
 
 ## Contents
 
@@ -11,18 +12,20 @@ from the seeded demo database.
 - [Errors](#errors)
 - [Pagination](#pagination)
 - [Access matrix](#access-matrix)
+- [Endpoint summary](#endpoint-summary)
 - [Endpoints](#endpoints)
-  - [Staff authentication](#staff-authentication)
-  - [Customer authentication](#customer-authentication)
-  - [Majors](#majors)
-  - [Staff management (Admin)](#staff-management-admin)
-  - [Customer accounts (Admin, Supervisor)](#customer-accounts-admin-supervisor)
+  - [Login gateway](#login-gateway)
+  - [Shared staff endpoints](#shared-staff-endpoints)
+  - [Staff management](#staff-management)
+  - [Settings](#settings)
+  - [Customer accounts](#customer-accounts)
+  - [Teller: shift and cash closing](#teller-shift-and-cash-closing)
   - [Teller: transactions](#teller-transactions)
-  - [Teller: daily report](#teller-daily-report)
-  - [Teller: cash drawer and transfers](#teller-cash-drawer-and-transfers)
+  - [Teller: corrections](#teller-corrections)
   - [Supervisor: daily reports](#supervisor-daily-reports)
-  - [Supervisor: cash transfers](#supervisor-cash-transfers)
-  - [Audit (Admin, Supervisor)](#audit-admin-supervisor)
+  - [Supervisor: vault ledger](#supervisor-vault-ledger)
+  - [Audit](#audit)
+  - [Reports and PDF exports](#reports-and-pdf-exports)
   - [Customer portal](#customer-portal)
 - [Objects](#objects)
 - [Workflows](#workflows)
@@ -33,43 +36,52 @@ from the seeded demo database.
 
 | Item | Rule |
 | --- | --- |
-| Base URL | `http://localhost:8000/api` (whatever host serves the app, plus `/api`) |
-| Headers | `Accept: application/json` on every request, `Content-Type: application/json` when sending a body, `Authorization: Bearer <token>` on every endpoint except login |
+| Base URL | `http://localhost:8000/api` (the app's host plus `/api`) |
+| Headers | `Accept: application/json` always; `Content-Type: application/json` with a body; `Authorization: Bearer <token>` everywhere except login |
 | Money | Integer Rupiah, no decimals (`50000` = Rp50.000) |
-| Timestamps | ISO 8601 in UTC, e.g. `2026-10-23T06:17:25.000000Z` (= 13:17 WIB). Convert to local time in the client |
-| Dates | `YYYY-MM-DD` in the school's timezone (Asia/Jakarta), e.g. `report_date`, `?date=`, `?from=`, `?to=` |
+| Timestamps | ISO 8601 in UTC, e.g. `2026-10-27T13:10:36.000000Z` (= 20:10 WIB). Convert to local time in the client |
+| Dates | `YYYY-MM-DD` in the school's timezone (Asia/Jakarta). Audit filters also accept `YYYY-MM-DD HH:MM` |
 | Single objects | Wrapped in `data` |
-| Lists | `data` array plus `links` and `meta` (see [Pagination](#pagination)) |
-| Messages | Business-rule messages are Indonesian; field validation messages come from Laravel in English |
+| Lists | `data` array plus `links` and `meta` |
+| PDFs | `Content-Type: application/pdf` and `Content-Disposition: attachment; filename=...` |
+| Messages | Business-rule messages are Indonesian; field validation messages are Laravel's English defaults |
 
 ### Enums
 
 | Field | Values |
 | --- | --- |
 | Staff `role` | `admin`, `supervisor`, `teller` |
-| Customer `account_status` | `active` (can transact), `suspended` (can log in and view, cannot transact), `inactive` (graduated, cannot log in, soft deleted) |
-| Customer `class` | `X`, `XI`, `XII` |
-| Customer `group` | `1`, `2`, `3`, `4` |
-| Transaction `type` | `deposit`, `withdrawal` |
+| Customer `account_status` | `active` (can transact), `suspended` (can log in and view, cannot transact), `inactive` (graduated: cannot log in, soft deleted) |
+| Customer `class` / `group` | `X`, `XI`, `XII` / `1`–`4` |
+| Transaction `type` | `deposit`, `withdrawal`, `deposit_correction`, `withdrawal_correction` |
 | Journal `account_code` | `101` (Kas), `201` (Tabungan Nasabah) |
 | Journal `position` | `debit`, `credit` |
-| Daily report `status` | `submitted`, `approved`, `rejected` (`draft` exists in the schema but drafts are never stored, use the preview endpoint) |
-| Cash transfer `status` | `pending`, `approved`, `rejected` |
+| Daily report `status` | `open`, `submitted`, `on_hold`, `approved`, `rejected` |
+| Setting `qr_scanner_mode` | `webcam`, `usb`, `disabled` |
+| Cash denominations | `100000`, `50000`, `20000`, `10000`, `5000`, `2000`, `1000`, `500`, `200`, `100` |
+
+### Account numbers
+
+`{major code}-{school year}-{serial}`, e.g. `RPL-2026-001`. The school year runs
+July–June (an account opened in October 2026 or June 2027 gets `2026`). The serial
+restarts for every major and school year and is never reused. Major codes: AK, BR,
+BD, MP, DKV, RPL, TKJ, LPS.
 
 ---
 
 ## Authentication
 
-Laravel Sanctum bearer tokens. Staff and customers log in through separate
-endpoints and receive a token that only works on their own portal.
+Laravel Sanctum bearer tokens, issued by the single login gateway `POST /login`.
+Staff tokens only work on staff endpoints, customer tokens only on `/customer/*`.
 
-- Tokens expire after **8 hours** (`SANCTUM_EXPIRATION`, in minutes). An expired token returns `401`.
+- Tokens expire after **8 hours** (`SANCTUM_EXPIRATION`). An expired token returns `401`.
 - Logout revokes only the token used for that request.
-- Login is limited to **5 attempts per minute** per username/identifier and IP. Further attempts return `429`.
-- Deactivating a staff member or closing a customer account revokes all their tokens immediately.
+- Login is limited to **5 attempts per minute** per username/identifier and IP (`429`).
+- Blocking a staff member or closing a customer account revokes their tokens immediately.
+- Every request re-checks the actor and role against the database before running a query.
 
 ```http
-POST /api/staff/login
+POST /api/login
 Accept: application/json
 Content-Type: application/json
 
@@ -79,523 +91,515 @@ Content-Type: application/json
 Use `data.token` from the response on later requests:
 
 ```http
-GET /api/staff/me
+GET /api/teller/shift
 Accept: application/json
-Authorization: Bearer 3|PoaaOcaZraufqaBaHcGgRSexkssRnJ31N5xngHSD9bb886a4
+Authorization: Bearer 3|FsAYFafTXVEvVS53PFOaEpdq9AdSeFJ1grmZ2TBS63522aba
 ```
 
 ---
 
 ## Errors
 
-Every error has a `message`. Validation errors also have `errors`, keyed by field.
+Every error has a `message`. Validation errors also have `errors` keyed by field.
+Some business errors add extra fields (shown below).
 
 | Status | When | Example body |
 | --- | --- | --- |
 | `401` | Missing, invalid or expired token | `{ "message": "Unauthenticated." }` |
-| `403` | Wrong actor or role, or a deactivated account | `{ "message": "Peran Anda tidak memiliki akses ke fitur ini." }` |
-| `404` | Record does not exist, or belongs to someone else | `{ "message": "Data tidak ditemukan." }` |
-| `405` | Method not supported on that URL (e.g. writing to the journal) | `{ "message": "The DELETE method is not supported for route ..." }` |
+| `403` | Wrong actor or role, or a blocked/closed account | `{ "message": "Peran Anda tidak memiliki akses ke fitur ini." }` |
+| `404` | Record does not exist or belongs to someone else | `{ "message": "Data tidak ditemukan." }` |
+| `405` | Method not allowed on that URL (e.g. writing to the journal) | `{ "message": "The DELETE method is not supported for route ..." }` |
+| `409` | Staff delete refused because of history | `{ "message": "Staf ini memiliki riwayat transaksi, ... Blokir akunnya saja." }` |
 | `422` | Field validation failed | `{ "message": "...", "errors": { "amount": ["The amount field must be at least 1."] } }` |
-| `422` | A business rule refused the request | `{ "message": "Saldo tidak mencukupi. Saldo minimum Rp10.000 harus tetap tersisa; penarikan maksimal Rp515.000." }` |
-| `429` | Too many login attempts | `{ "message": "Too Many Attempts." }` |
-| `500` | Unexpected server error (the money operation is fully rolled back) | `{ "message": "Server Error" }` |
+| `422` | Business rule refused the request | `{ "message": "Saldo tidak mencukupi. Saldo minimum Rp10.000 harus tetap tersisa; penarikan maksimal Rp990.000." }` |
+| `429` | Too many login/correction attempts | `{ "message": "Too Many Attempts." }` |
+| `500` | Unexpected server error; any money operation is fully rolled back | `{ "message": "Server Error" }` |
 
-The `403` messages tell you which check failed:
+`403` messages tell the client what failed: `Fitur ini khusus untuk staf bank.`
+(customer token on a staff URL), `Fitur ini khusus untuk nasabah.` (staff token on a
+customer URL), `Peran Anda tidak memiliki akses ke fitur ini.` (wrong staff role),
+`Akun staf ini sudah dinonaktifkan.`, `Rekening ini sudah tidak aktif.`
 
-| Message | Meaning |
-| --- | --- |
-| `Fitur ini khusus untuk staf bank.` | A customer token was used on a staff endpoint |
-| `Fitur ini khusus untuk nasabah.` | A staff token was used on a customer endpoint |
-| `Peran Anda tidak memiliki akses ke fitur ini.` | Staff member with the wrong role |
-| `Akun staf ini sudah dinonaktifkan.` | Staff account was deactivated |
-| `Rekening ini sudah tidak aktif.` | Customer account is `inactive` |
-
-A role check always runs before the record is looked up, so an unauthorized
-caller gets `403`, never `404`, and cannot probe which IDs exist.
+The role check runs before the record is looked up, so a wrong role always gets
+`403`, never `404`. **Frontends should log the user out and return to the login
+page on `401` or `403`** (rubric 3.2).
 
 ---
 
 ## Pagination
 
-List endpoints accept `?page=` (default 1) and `?per_page=` (between 1 and 100;
-the default is listed per endpoint).
+Lists accept `?page=` (default 1) and `?per_page=` (1–100; default per endpoint).
 
 ```json
 {
   "data": [ ... ],
-  "links": {
-    "first": "http://127.0.0.1:8123/api/customers?page=1",
-    "last": "http://127.0.0.1:8123/api/customers?page=2",
-    "prev": null,
-    "next": "http://127.0.0.1:8123/api/customers?page=2"
-  },
-  "meta": {
-    "current_page": 1,
-    "from": 1,
-    "last_page": 2,
-    "links": [ ... ],
-    "path": "http://127.0.0.1:8123/api/customers",
-    "per_page": 2,
-    "to": 2,
-    "total": 4
-  }
+  "links": { "first": "...?page=1", "last": "...?page=2", "prev": null, "next": "...?page=2" },
+  "meta": { "current_page": 1, "from": 1, "last_page": 2, "path": "...", "per_page": 15, "to": 15, "total": 22 }
 }
 ```
-
-Later examples show only `data` for lists.
 
 ---
 
 ## Access matrix
 
-| Area | Admin | Supervisor | Teller | Customer |
+Matches the matrix in the UKK soal (section III.1).
+
+| Feature | Admin | Teller | Supervisor | Nasabah |
 | --- | :-: | :-: | :-: | :-: |
-| Staff management | ✓ | | | |
-| Open / edit / close accounts | ✓ | | | |
-| Read account list | ✓ | ✓ | | |
-| Look up one customer | | | ✓ | |
-| Deposit and withdraw | | | ✓ | |
-| Daily report: prepare and submit | | | ✓ | |
-| Daily report: approve or reject | | ✓ | | |
-| Cash transfer: request | | | ✓ | |
-| Cash transfer: authorize | | ✓ | | |
-| Audit transactions and journal (read-only) | ✓ | ✓ | | |
-| Own balance and statement | | | | ✓ |
+| User management | C, R, U, D | — | R | — |
+| Accounts (open, edit, close, print card) | C, R, U | R (lookup) | R | — |
+| QR scan lookup | Configure (settings) | R (execute) | — | — |
+| Deposit / withdrawal / correction | — | C | R (audit log) | — |
+| Withdrawal PIN | — | — | — | Enters PIN at the counter |
+| Shift, cash closing, daily report draft | — | C, R | R | — |
+| Approve / hold / reject daily report | — | — | U | — |
+| Cash to vault (on approval) | — | — | U | — |
+| Own balance, statement, card, PIN change | — | — | — | R (own data) |
+| Accounting journal and reports | R | — | R | — |
+
+---
+
+## Endpoint summary
+
+| Method | Path | Who |
+| --- | --- | --- |
+| `POST` | `/login` | Public (all roles) |
+| `POST` | `/staff/login`, `/customer/login` | Public (aliases of `/login`) |
+| `GET` | `/staff/me` · `POST` `/staff/logout` | Staff |
+| `GET` | `/majors` · `/settings` | Staff |
+| `GET` | `/staff`, `/staff/{id}` | Admin, Supervisor |
+| `POST` | `/admin/staff`, `/admin/staff/import` | Admin |
+| `PUT`/`PATCH`, `DELETE` | `/admin/staff/{id}` | Admin |
+| `POST` | `/admin/staff/{id}/block`, `/admin/staff/{id}/unblock` | Admin |
+| `PUT`/`PATCH` | `/admin/settings` | Admin |
+| `GET` | `/customers`, `/customers/{id}` | Admin, Supervisor |
+| `GET` | `/customers/{id}/statement` (PDF) | Admin, Supervisor |
+| `POST` | `/admin/customers` | Admin |
+| `PUT`/`PATCH` | `/admin/customers/{id}` | Admin |
+| `POST` | `/admin/customers/{id}/deactivate` | Admin |
+| `GET` | `/admin/customers/{id}/card` | Admin |
+| `GET` | `/teller/shift` · `POST` `/teller/shift/open`, `/teller/shift/close` | Teller |
+| `GET` | `/teller/daily-reports`, `/teller/daily-reports/{id}`, `/teller/daily-reports/{id}/export` (PDF) | Teller |
+| `GET` | `/teller/customers/lookup` | Teller |
+| `POST` | `/teller/deposits`, `/teller/withdrawals` | Teller |
+| `GET` | `/teller/transactions`, `/teller/transactions/{id}/receipt` (PDF) | Teller |
+| `POST` | `/teller/transactions/{id}/correct` | Teller |
+| `GET` | `/supervisor/daily-reports`, `/supervisor/daily-reports/{id}`, `/supervisor/daily-reports/{id}/export` (PDF) | Supervisor |
+| `POST` | `/supervisor/daily-reports/{id}/approve`, `/hold`, `/reject` | Supervisor |
+| `GET` | `/supervisor/cash-transfers`, `/supervisor/cash-transfers/{id}` | Supervisor |
+| `GET` | `/audit/transactions`, `/audit/transactions/{id}`, `/audit/transactions/export` (PDF) | Admin, Supervisor |
+| `GET` | `/audit/journals`, `/audit/journals/summary`, `/audit/journals/export` (PDF) | Admin, Supervisor |
+| `GET` | `/reports/annual` (PDF) | Admin, Supervisor |
+| `GET` | `/customer/me`, `/customer/balance`, `/customer/card` | Nasabah |
+| `GET` | `/customer/transactions`, `/customer/transactions/{id}`, `/customer/statement/export` (PDF) | Nasabah |
+| `POST` | `/customer/pin` · `/customer/logout` | Nasabah |
 
 ---
 
 ## Endpoints
 
-### Summary
+### Login gateway
 
-| Method | Path | Who |
-| --- | --- | --- |
-| `POST` | `/staff/login` | Public |
-| `GET` | `/staff/me` | Staff |
-| `POST` | `/staff/logout` | Staff |
-| `POST` | `/customer/login` | Public |
-| `GET` | `/customer/me` | Customer |
-| `POST` | `/customer/logout` | Customer |
-| `GET` | `/majors` | Staff |
-| `GET` | `/admin/staff` | Admin |
-| `POST` | `/admin/staff` | Admin |
-| `GET` | `/admin/staff/{id}` | Admin |
-| `PUT`/`PATCH` | `/admin/staff/{id}` | Admin |
-| `DELETE` | `/admin/staff/{id}` | Admin |
-| `GET` | `/customers` | Admin, Supervisor |
-| `GET` | `/customers/{id}` | Admin, Supervisor |
-| `POST` | `/admin/customers` | Admin |
-| `PUT`/`PATCH` | `/admin/customers/{id}` | Admin |
-| `POST` | `/admin/customers/{id}/deactivate` | Admin |
-| `GET` | `/teller/customers/lookup` | Teller |
-| `POST` | `/teller/deposits` | Teller |
-| `POST` | `/teller/withdrawals` | Teller |
-| `GET` | `/teller/transactions` | Teller |
-| `GET` | `/teller/daily-reports/preview` | Teller |
-| `GET` | `/teller/daily-reports` | Teller |
-| `POST` | `/teller/daily-reports` | Teller |
-| `GET` | `/teller/daily-reports/{id}` | Teller |
-| `GET` | `/teller/drawer` | Teller |
-| `GET` | `/teller/cash-transfers` | Teller |
-| `POST` | `/teller/cash-transfers` | Teller |
-| `GET` | `/supervisor/daily-reports` | Supervisor |
-| `GET` | `/supervisor/daily-reports/{id}` | Supervisor |
-| `POST` | `/supervisor/daily-reports/{id}/approve` | Supervisor |
-| `POST` | `/supervisor/daily-reports/{id}/reject` | Supervisor |
-| `GET` | `/supervisor/cash-transfers` | Supervisor |
-| `GET` | `/supervisor/cash-transfers/{id}` | Supervisor |
-| `POST` | `/supervisor/cash-transfers/{id}/approve` | Supervisor |
-| `POST` | `/supervisor/cash-transfers/{id}/reject` | Supervisor |
-| `GET` | `/audit/transactions` | Admin, Supervisor |
-| `GET` | `/audit/transactions/{id}` | Admin, Supervisor |
-| `GET` | `/audit/journals` | Admin, Supervisor |
-| `GET` | `/audit/journals/summary` | Admin, Supervisor |
-| `GET` | `/customer/balance` | Customer |
-| `GET` | `/customer/transactions` | Customer |
-| `GET` | `/customer/transactions/{id}` | Customer |
+#### `POST /login`
 
----
-
-### Staff authentication
-
-#### `POST /staff/login`
-
-Log in an administrator, supervisor or teller.
+The single entry point for all four roles (soal: "satu pintu gerbang login terpusat").
+Send **either** staff or customer credentials. `data.actor` tells the client which
+portal to open. `/staff/login` and `/customer/login` accept the same bodies.
 
 | Field | Rules |
 | --- | --- |
-| `username` | required, string |
-| `password` | required, string |
+| `username`, `password` | Staff: required together |
+| `identifier`, `pin` | Customer: NIS or account number (max 50) and a 6-digit PIN |
 
-**200**
+**200 (staff)**
 
 ```json
 {
   "data": {
-    "token": "3|PoaaOcaZraufqaBaHcGgRSexkssRnJ31N5xngHSD9bb886a4",
+    "actor": "staff",
+    "token": "3|FsAYFafTXVEvVS53PFOaEpdq9AdSeFJ1grmZ2TBS63522aba",
     "token_type": "Bearer",
     "user": {
-      "id": 3,
-      "username": "teller",
-      "full_name": "Teller Loket 1",
-      "role": "teller",
-      "is_active": true,
-      "created_at": "2026-10-23T06:17:21.000000Z",
-      "updated_at": "2026-10-23T06:17:21.000000Z"
+      "id": 3, "username": "teller", "full_name": "Teller Loket 1",
+      "class": "XI AK 1", "phone": "081200000001", "role": "teller", "is_active": true,
+      "created_at": "2026-10-27T13:10:33.000000Z", "updated_at": "2026-10-27T13:10:33.000000Z"
     }
   }
 }
 ```
 
-**422** wrong credentials (`Username atau password salah.`) or a deactivated account (`Akun staf ini sudah dinonaktifkan.`), both on the `username` field:
+**200 (customer)**: `actor` is `"customer"` and `data.customer` is a [Customer](#customer).
+
+**422**: wrong credentials (`Username atau password salah.` /
+`NIS/nomor rekening atau PIN salah.`), blocked staff, closed account, or neither
+kind of credentials:
 
 ```json
 {
-  "message": "Username atau password salah.",
-  "errors": { "username": ["Username atau password salah."] }
+  "message": "Isi username dan password (staf) atau NIS/nomor rekening dan PIN (nasabah).",
+  "errors": { "username": ["Isi username dan password (staf) atau NIS/nomor rekening dan PIN (nasabah)."] }
 }
-```
-
-#### `GET /staff/me`
-
-The logged-in staff member as a [Staff](#staff) object.
-
-#### `POST /staff/logout`
-
-Revokes the current token.
-
-```json
-{ "message": "Berhasil keluar." }
 ```
 
 ---
 
-### Customer authentication
+### Shared staff endpoints
 
-#### `POST /customer/login`
-
-Log in a student with their NIS **or** account number and 6-digit PIN.
-
-| Field | Rules |
+| Endpoint | Description |
 | --- | --- |
-| `identifier` | required, string, max 50. NIS or account number |
-| `pin` | required, exactly 6 digits |
-
-**200** (the customer is a [Customer](#customer) object)
-
-```json
-{
-  "data": {
-    "token": "4|UIawR2Uml7G79hPKZeKidnhyJVkVHKDGnnNEmywJ6af99c26",
-    "token_type": "Bearer",
-    "customer": {
-      "id": 1,
-      "account_number": "1000000001",
-      "nis": "20260001",
-      "full_name": "Budi Santoso",
-      "class": "X",
-      "group": "1",
-      "major": { "id": 1, "major_name": "Rekayasa Perangkat Lunak" },
-      "account_status": "active",
-      "balance": 500000,
-      "created_at": "2026-10-23T06:17:21.000000Z",
-      "updated_at": "2026-10-23T06:17:21.000000Z",
-      "deleted_at": null
-    }
-  }
-}
-```
-
-**422** on `identifier`: `NIS/nomor rekening atau PIN salah.` or `Rekening ini sudah tidak aktif.`; on `pin`: wrong format.
-
-Suspended customers can still log in.
-
-#### `GET /customer/me`
-
-The logged-in customer as a [Customer](#customer) object.
-
-#### `POST /customer/logout`
-
-Revokes the current token. Returns `{ "message": "Berhasil keluar." }`.
+| `GET /staff/me` | The logged-in [Staff](#staff) |
+| `POST /staff/logout` | Revokes the current token: `{ "message": "Berhasil keluar." }` |
+| `GET /majors` | All majors with codes, not paginated: `{ "data": [{ "id": 4, "code": "AK", "major_name": "Akuntansi dan Keuangan Lembaga" }, ...] }` |
+| `GET /settings` | Current [settings](#settings) (the teller screen needs the scanner mode and minimum balance) |
 
 ---
 
-### Majors
+### Staff management
 
-#### `GET /majors`
+#### `GET /staff` · `GET /staff/{id}`
 
-**Who:** any staff. Every major, sorted by name, for the account form's dropdown. Not paginated.
-
-```json
-{
-  "data": [
-    { "id": 4, "major_name": "Akuntansi dan Keuangan Lembaga" },
-    { "id": 6, "major_name": "Bisnis Daring" },
-    { "id": 1, "major_name": "Rekayasa Perangkat Lunak" }
-  ]
-}
-```
-
----
-
-### Staff management (Admin)
-
-Administrators manage teller and supervisor accounts. Administrator accounts
-can be viewed but not changed through the API.
-
-#### `GET /admin/staff`
-
-Paginated list of [Staff](#staff), sorted by name. Default `per_page`: 15.
+**Admin, Supervisor.** [Staff](#staff) sorted by name. Default `per_page` 15.
 
 | Query | Description |
 | --- | --- |
-| `status` | `active` (default), `inactive` or `all` |
-| `role` | `admin`, `supervisor` or `teller` |
-| `search` | Matches username or full name |
+| `status` | `active` (default), `inactive`, `all` |
+| `role` | `admin`, `supervisor`, `teller` |
+| `search` | Username or full name |
 
 #### `POST /admin/staff`
 
-Create a teller or supervisor.
+**Admin.** Create a teller or supervisor.
 
 | Field | Rules |
 | --- | --- |
 | `username` | required, letters/numbers/`-`/`_`, max 50, unique |
 | `full_name` | required, max 255 |
-| `password` | required, min 8 characters |
-| `role` | required, `teller` or `supervisor` (creating `admin` fails validation) |
-
-```json
-{ "username": "teller2", "full_name": "Teller Loket 2", "password": "rahasia123", "role": "teller" }
-```
+| `password` | required, min 8 |
+| `role` | required, `teller` or `supervisor` (`admin` is refused) |
+| `class` | optional, max 20 (e.g. `XI AK 2`) |
+| `phone` | optional, digits, spaces, `+`, `-`, max 20 (WhatsApp number) |
 
 **201**
 
 ```json
 {
   "data": {
-    "id": 4,
-    "username": "teller2",
-    "full_name": "Teller Loket 2",
-    "role": "teller",
-    "is_active": true,
-    "created_at": "2026-10-23T06:17:25.000000Z",
-    "updated_at": "2026-10-23T06:17:25.000000Z"
+    "id": 4, "username": "rina", "full_name": "Rina Wulandari", "class": "XI AK 2",
+    "phone": "081200000002", "role": "teller", "is_active": true,
+    "created_at": "2026-10-27T13:10:36.000000Z", "updated_at": "2026-10-27T13:10:36.000000Z"
   }
 }
 ```
 
-#### `GET /admin/staff/{id}`
-
-One [Staff](#staff) object.
-
 #### `PUT|PATCH /admin/staff/{id}`
 
-Update any subset of fields. Setting `is_active` to `false` also revokes their tokens; `true` reactivates the account.
+**Admin.** Any subset of `username`, `full_name`, `password`, `role` (`teller`/`supervisor`),
+`class`, `phone`. **403** for administrator accounts:
+`Akun administrator tidak dapat diubah melalui API.`
 
-| Field | Rules |
-| --- | --- |
-| `username` | letters/numbers/`-`/`_`, max 50, unique |
-| `full_name` | max 255 |
-| `password` | min 8 characters |
-| `role` | `teller` or `supervisor` |
-| `is_active` | boolean |
+#### `POST /admin/staff/{id}/block` · `POST /admin/staff/{id}/unblock`
 
-```json
-{ "full_name": "Teller Loket Dua", "role": "supervisor" }
-```
-
-**200** the updated [Staff](#staff). **403** if the target is an administrator:
-
-```json
-{ "message": "Akun administrator tidak dapat diubah melalui API." }
-```
+**Admin.** Block keeps the account (its history must keep pointing at it), sets
+`is_active` to `false` and revokes its tokens. Unblock restores access. **200** the
+updated [Staff](#staff). **403** for administrators.
 
 #### `DELETE /admin/staff/{id}`
 
-Removes access without deleting the record, because their transactions must keep
-pointing at them: sets `is_active` to `false` and revokes their tokens.
-**200** the updated [Staff](#staff) (`"is_active": false`). **403** for administrators.
+**Admin.** Permanently deletes an account that was never used. **200**
+`{ "message": "Akun staf dihapus." }`. **409** when transactions, reports or approvals
+reference it (protected by `ON DELETE RESTRICT`):
+
+```json
+{ "message": "Staf ini memiliki riwayat transaksi, laporan, atau persetujuan sehingga tidak dapat dihapus. Blokir akunnya saja." }
+```
+
+#### `POST /admin/staff/import`
+
+**Admin.** Create many tellers/supervisors from a spreadsheet. `multipart/form-data`
+with field `file` (`.xlsx` or `.csv`, comma or semicolon separated, max 2 MB, max
+500 rows). The first row is the header; Indonesian headers are accepted:
+
+| Field | Accepted headers |
+| --- | --- |
+| username (required) | `username` |
+| full name (required) | `full_name`, `nama`, `nama_lengkap` |
+| password (optional, min 8) | `password`, `kata_sandi` |
+| role (optional, default `teller`) | `role`, `peran` |
+| class (optional) | `class`, `kelas` |
+| phone (optional) | `phone`, `no_wa`, `whatsapp`, `no_hp` |
+
+All or nothing: if any row is invalid, no account is created. Rows without a
+password get a random 10-character one, returned **once** in `generated_password`.
+
+**201**
+
+Example file (Excel with Indonesian regional settings, `;` separated):
+
+```text
+Username;Nama;Kelas;No WA;Password
+rina;Rina Wulandari;XI AK 1;081200000002;rahasia123
+dodi;Dodi Saputra;XI AK 2;081200000003;
+```
+
+```json
+{
+  "data": {
+    "created": 2,
+    "users": [
+      { "id": 4, "username": "rina", "full_name": "Rina Wulandari", "class": "XI AK 1", "phone": "081200000002", "role": "teller", "is_active": true, "...": "...", "generated_password": null },
+      { "id": 5, "username": "dodi", "full_name": "Dodi Saputra", "class": "XI AK 2", "phone": "081200000003", "role": "teller", "is_active": true, "...": "...", "generated_password": "7cCQgOcUs6" }
+    ]
+  }
+}
+```
+
+**422**: errors are keyed `rows.{index}.{field}` (index 0 = spreadsheet row 2) and the
+message names the spreadsheet row:
+
+```json
+{ "message": "The username (baris 2) has already been taken.", "errors": { "rows.0.username": ["The username (baris 2) has already been taken."] } }
+```
 
 ---
 
-### Customer accounts (Admin, Supervisor)
+### Settings
 
-#### `GET /customers`
+Global configuration set by the administrator (soal 1a).
 
-**Who:** Admin, Supervisor. Paginated list of [Customer](#customer), sorted by name. Default `per_page`: 15.
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `min_balance` | integer 0–1,000,000 | `10000` | Balance that must remain after a withdrawal |
+| `qr_scanner_mode` | `webcam`, `usb`, `disabled` | `webcam` | How the teller screen reads customer QR cards (camera, USB scanner that types like a keyboard, or manual entry only) |
+
+`GET /settings` (any staff) and `PUT|PATCH /admin/settings` (admin, any subset):
+
+```json
+{ "data": { "min_balance": 10000, "qr_scanner_mode": "webcam" } }
+```
+
+---
+
+### Customer accounts
+
+#### `GET /customers` · `GET /customers/{id}`
+
+**Admin, Supervisor.** [Customer](#customer) list sorted by name (default `per_page` 15).
+Closed accounts are hidden from the list by default but can always be opened by id.
 
 | Query | Description |
 | --- | --- |
-| `search` | Matches full name, NIS or account number |
-| `major_id` | Filter by major |
-| `class` | `X`, `XI`, `XII` |
-| `group` | `1`–`4` |
-| `status` | `active`, `suspended`, `inactive` |
-| `trashed` | Closed accounts are hidden by default. `with` includes them, `only` shows only them |
-
-#### `GET /customers/{id}`
-
-**Who:** Admin, Supervisor. One [Customer](#customer). Closed (graduated) accounts can still be viewed.
+| `search` | Name, NIS or account number |
+| `major_id`, `class`, `group`, `status` | Filters |
+| `trashed` | `with` includes closed accounts, `only` shows only them |
 
 #### `POST /admin/customers`
 
-**Who:** Admin. Open a savings account. The system generates the next 10-digit
-account number; every account starts `active` with balance `0`, because money only
-comes in through a teller deposit. Any `account_number`, `account_status` or
-`balance` sent is ignored.
+**Admin.** Open an account. The account number is generated; the account starts
+`active` with balance `0` (money only enters through a teller). `account_number`,
+`account_status` and `balance` in the body are ignored.
 
 | Field | Rules |
 | --- | --- |
 | `nis` | required, max 20, unique (including closed accounts) |
 | `full_name` | required, max 255 |
-| `class` | required, `X`, `XI` or `XII` |
-| `major_id` | required, existing major ID |
+| `class` | required, `X`/`XI`/`XII` |
+| `major_id` | required, existing major |
 | `group` | required, `1`–`4` |
 | `pin` | required, exactly 6 digits (stored hashed) |
-
-```json
-{ "nis": "20260004", "full_name": "Dewi Anggraini", "class": "X", "major_id": 3, "group": "2", "pin": "654321" }
-```
 
 **201**
 
 ```json
 {
   "data": {
-    "id": 4,
-    "account_number": "1000000004",
-    "nis": "20260004",
-    "full_name": "Dewi Anggraini",
-    "class": "X",
-    "group": "2",
-    "major": { "id": 3, "major_name": "Manajemen Perkantoran" },
-    "account_status": "active",
-    "balance": 0,
-    "created_at": "2026-10-23T06:17:25.000000Z",
-    "updated_at": "2026-10-23T06:17:25.000000Z",
-    "deleted_at": null
-  }
-}
-```
-
-**422**
-
-```json
-{
-  "message": "The nis has already been taken. (and 4 more errors)",
-  "errors": {
-    "nis": ["The nis has already been taken."],
-    "full_name": ["The full name field is required."],
-    "class": ["The selected class is invalid."],
-    "major_id": ["The selected major id is invalid."],
-    "pin": ["The pin field must be 6 digits."]
+    "id": 4, "account_number": "AK-2026-001", "nis": "20260004", "full_name": "Dewi Anggraini",
+    "class": "X", "group": "2",
+    "major": { "id": 4, "code": "AK", "major_name": "Akuntansi dan Keuangan Lembaga" },
+    "account_status": "active", "balance": 0,
+    "created_at": "2026-10-27T13:10:36.000000Z", "updated_at": "2026-10-27T13:10:36.000000Z", "deleted_at": null
   }
 }
 ```
 
 #### `PUT|PATCH /admin/customers/{id}`
 
-**Who:** Admin. Update any subset of fields. Account number and balance cannot be
-changed. To close an account use [deactivate](#post-admincustomersiddeactivate).
-
-| Field | Rules |
-| --- | --- |
-| `nis` | max 20, unique |
-| `full_name` | max 255 |
-| `class` | `X`, `XI`, `XII` |
-| `major_id` | existing major ID |
-| `group` | `1`–`4` |
-| `account_status` | `active` or `suspended` only |
-| `pin` | exactly 6 digits (PIN reset) |
-
-```json
-{ "class": "XI", "account_status": "suspended" }
-```
-
-**200** the updated [Customer](#customer).
+**Admin.** Any subset of `nis`, `full_name`, `class`, `major_id`, `group`,
+`account_status` (`active` or `suspended` only) and `pin` (6 digits; a PIN reset
+also lifts a PIN lock). Account number and balance cannot be changed.
 
 #### `POST /admin/customers/{id}/deactivate`
 
-**Who:** Admin. Close a graduated student's account: sets `account_status` to
-`inactive`, revokes their tokens and soft deletes the row. Transactions and
-journals are kept. No body.
+**Admin.** Graduation: status `inactive`, tokens revoked, soft deleted. History stays.
 
-**200**
+#### `GET /admin/customers/{id}/card`
+
+**Admin.** Data to print the customer card. Encode `qr_payload` as the QR code.
 
 ```json
 {
   "data": {
-    "id": 4,
-    "account_number": "1000000004",
-    "account_status": "inactive",
-    "balance": 0,
-    "deleted_at": "2026-10-23T06:17:25.000000Z",
-    "...": "other Customer fields"
+    "account_number": "AK-2026-001", "nis": "20260004", "full_name": "Dewi Anggraini",
+    "class": "X", "group": "2",
+    "major": { "code": "AK", "major_name": "Akuntansi dan Keuangan Lembaga" },
+    "account_status": "active",
+    "qr_payload": "BANKMINI:AK-2026-001"
   }
 }
 ```
 
 ---
 
-### Teller: transactions
+### Teller: shift and cash closing
 
-#### `GET /teller/customers/lookup`
+A teller works inside a **shift** (one per day), which is also the daily report:
 
-Find the customer at the counter by exact account number (tried first) or NIS.
-Closed accounts are not found.
+1. **Open** by counting the drawer (saldo awal).
+2. Deposits, withdrawals and corrections are recorded in the open shift. Without an
+   open shift dated today, they are refused.
+3. **Close** by counting the cash again (uang fisik). It must equal
+   `opening_balance + total_deposit − total_withdrawal` (the **system balance**).
+   On a mismatch nothing is saved and the report cannot be submitted or printed.
+4. A supervisor approves (the cash moves to the vault), holds or rejects it. A
+   rejection reopens the shift.
 
-| Query | Rules |
-| --- | --- |
-| `identifier` | required, max 50 |
+Totals are net of corrections. A teller must close an old shift before opening a new one.
 
-**200** a [CustomerSummary](#customersummary)
+Cash counts are sent as `{"denominations": {"<denomination>": <quantity>, ...}}`
+with the denominations listed under [Enums](#enums); quantities 0–100,000.
+
+#### `GET /teller/shift`
+
+The active shift (open or rejected) with **live** totals and its transactions, which
+doubles as the on-screen closing draft. `can_transact` is `false` for a shift from an
+earlier day (it can only be closed).
 
 ```json
 {
   "data": {
-    "id": 1,
-    "account_number": "1000000001",
-    "nis": "20260001",
-    "full_name": "Budi Santoso",
-    "class": "X",
-    "group": "1",
-    "major_name": "Rekayasa Perangkat Lunak",
-    "account_status": "active",
-    "balance": 500000
+    "id": 2, "report_date": "2026-10-27", "status": "open",
+    "opening_balance": 150000, "opened_at": "2026-10-27T13:10:36.000000Z",
+    "transaction_count": 5, "total_deposit": 132000, "total_withdrawal": 30000,
+    "system_balance": 252000, "physical_balance": null, "difference": null,
+    "submitted_at": null, "reviewed_at": null, "supervisor_note": null, "supervisor": null,
+    "opening_counts": [
+      { "denomination": 50000, "quantity": 2, "subtotal": 100000 },
+      { "denomination": 10000, "quantity": 5, "subtotal": 50000 }
+    ],
+    "closing_counts": []
+  },
+  "can_transact": true,
+  "transactions": [ { "id": 4, "type": "deposit", "amount": 125000, "...": "Transaction" } ]
+}
+```
+
+Without an active shift: `{ "data": null, "can_transact": false, "closed_today": false }`
+(`closed_today` is `true` when today's shift has already been closed).
+
+#### `POST /teller/shift/open`
+
+```json
+{ "denominations": { "50000": 2, "10000": 5 } }
+```
+
+**201** the new [DailyReport](#dailyreport) with `status: "open"`, `opening_balance: 150000`
+and `opening_counts`. **422** when a shift is still running
+(`Shift tanggal 2026-10-26 masih berjalan. Tutup shift tersebut terlebih dahulu.`) or
+today's shift was already closed (`Shift hari ini sudah ditutup dan tidak dapat dibuka lagi.`).
+
+#### `POST /teller/shift/close`
+
+```json
+{ "denominations": { "100000": 2, "50000": 1, "2000": 1 } }
+```
+
+**200** the [DailyReport](#dailyreport) with `status: "submitted"`, the snapshot totals,
+`physical_balance`, `difference: 0` and `closing_counts`.
+
+**422 (cash mismatch)**: nothing is saved, the shift stays open:
+
+```json
+{
+  "message": "Uang fisik kurang Rp2.000 dari saldo sistem. Periksa ulang hitungan dan slip; laporan tidak dapat ditutup atau dicetak sampai sesuai.",
+  "system_balance": 252000,
+  "physical_balance": 250000,
+  "difference": -2000
+}
+```
+
+#### `GET /teller/daily-reports` · `GET /teller/daily-reports/{id}`
+
+The teller's own shifts, newest first (default `per_page` 15). The detail adds the
+cash counts, `cash_transfer` and a top-level `transactions` list. Another teller's
+report returns **404**.
+
+#### `GET /teller/daily-reports/{id}/export`
+
+The printable closing report (PDF, `laporan-harian-2026-10-27-teller-loket-1.pdf`)
+with the recap, denomination tables, transactions and signature lines. **Locked**
+until the shift is closed with matching cash:
+
+```json
+{ "message": "Laporan harian baru dapat dicetak setelah shift ditutup dengan uang fisik yang sesuai saldo sistem." }
+```
+
+---
+
+### Teller: transactions
+
+#### `GET /teller/customers/lookup?identifier=`
+
+Find the customer at the counter. `identifier` is a **scanned QR payload**
+(`BANKMINI:RPL-2026-001`) or a typed account number or NIS (manual fallback).
+Closed accounts are not found (**404** `Nasabah tidak ditemukan.`).
+
+```json
+{
+  "data": {
+    "id": 1, "account_number": "RPL-2026-001", "nis": "20260001", "full_name": "Budi Santoso",
+    "class": "X", "group": "1", "major_name": "Rekayasa Perangkat Lunak",
+    "account_status": "active", "balance": 500000,
+    "pin_locked_until": null
   }
 }
 ```
 
-**404** `{ "message": "Nasabah tidak ditemukan." }`
+`pin_locked_until` is set while withdrawals are locked after wrong PINs.
+
+#### Idempotency
+
+`POST /teller/deposits`, `/teller/withdrawals` and `/teller/transactions/{id}/correct`
+accept an optional header `Idempotency-Key` (letters, digits, `_ . : -`, max 100).
+Send a new key per transaction and **the same key when retrying** after a timeout:
+
+- New key: the transaction is recorded, **201**.
+- Same key and same request: nothing new is recorded. **200** with header
+  `Idempotent-Replayed: true` and the original transaction.
+- Same key with a different amount/customer/type: **422**
+  `Idempotency-Key ini sudah dipakai untuk transaksi lain. ...`
+
+Keys are per teller.
 
 #### `POST /teller/deposits`
 
-Cash deposit (*setor tunai*). In one database transaction: locks the customer
-row, increases the balance, records the transaction and writes two journal lines
-(Debit 101 Kas / Credit 201 Tabungan Nasabah).
+Cash deposit. In one database transaction: lock the customer, add to the balance,
+record the transaction, write the journal (Debit 101 Kas / Credit 201 Tabungan).
 
 | Field | Rules |
 | --- | --- |
 | `account_number` | required, an existing account that is not closed |
-| `amount` | required, integer, 1 – 100,000,000 |
-
-```json
-{ "account_number": "1000000001", "amount": 50000 }
-```
+| `amount` | required, integer 1 – 100,000,000 |
 
 **201** a [Transaction](#transaction)
 
 ```json
 {
   "data": {
-    "id": 4,
-    "type": "deposit",
-    "amount": 50000,
-    "balance_before": 500000,
-    "balance_after": 550000,
-    "created_at": "2026-10-23T06:17:25.000000Z",
-    "customer": { "id": 1, "account_number": "1000000001", "full_name": "Budi Santoso" }
+    "id": 4, "type": "deposit", "type_label": "Setor tunai",
+    "amount": 125000, "amount_in_words": "seratus dua puluh lima ribu rupiah",
+    "balance_before": 500000, "balance_after": 625000,
+    "created_at": "2026-10-27T13:10:36.000000Z", "daily_report_id": 2,
+    "corrects_transaction_id": null, "note": null,
+    "customer": { "id": 1, "account_number": "RPL-2026-001", "full_name": "Budi Santoso" }
   }
 }
 ```
@@ -604,175 +608,84 @@ row, increases the balance, records the transaction and writes two journal lines
 
 | Message | Cause |
 | --- | --- |
-| `Rekening berstatus suspended dan tidak dapat bertransaksi.` | Account is not `active` |
-| `Loket sudah ditutup: laporan harian hari ini sudah dikirim. Transaksi baru tidak dapat dilakukan.` | Teller already submitted today's daily report |
+| `Belum ada shift yang dibuka. Buka shift dengan menghitung saldo awal terlebih dahulu.` | No open shift |
+| `Shift hari ini sudah ditutup. Transaksi baru tidak dapat dilakukan sampai laporan ditolak supervisor.` | Today's shift is closed |
+| `Shift tanggal 2026-10-26 belum ditutup. Tutup shift tersebut sebelum bertransaksi.` | Yesterday's shift still open |
+| `Rekening berstatus ditangguhkan dan tidak dapat bertransaksi.` | Account suspended |
 
 #### `POST /teller/withdrawals`
 
-Cash withdrawal (*tarik tunai*). Same body and response as a deposit; journal is
-Debit 201 Tabungan Nasabah / Credit 101 Kas. The remaining balance must be at least
-the minimum balance (Rp10.000 by default, `BANK_MIN_BALANCE`).
+Cash withdrawal, **authorized by the customer's PIN** typed on the counter's
+confirmation screen (soal 1d). Journal: Debit 201 Tabungan / Credit 101 Kas.
 
-```json
-{ "account_number": "1000000001", "amount": 25000 }
-```
+| Field | Rules |
+| --- | --- |
+| `account_number`, `amount` | as for deposits |
+| `pin` | required, exactly 6 digits |
 
-**201**
-
-```json
-{
-  "data": {
-    "id": 5,
-    "type": "withdrawal",
-    "amount": 25000,
-    "balance_before": 550000,
-    "balance_after": 525000,
-    "created_at": "2026-10-23T06:17:25.000000Z",
-    "customer": { "id": 1, "account_number": "1000000001", "full_name": "Budi Santoso" }
-  }
-}
-```
+**201** a [Transaction](#transaction) with `type: "withdrawal"`.
 
 **422** in addition to the deposit errors:
 
 ```json
-{ "message": "Saldo tidak mencukupi. Saldo minimum Rp10.000 harus tetap tersisa; penarikan maksimal Rp515.000." }
+{ "message": "Saldo tidak mencukupi. Saldo minimum Rp10.000 harus tetap tersisa; penarikan maksimal Rp990.000." }
 ```
 
-#### `GET /teller/transactions`
+```json
+{ "message": "PIN salah. Sisa percobaan: 2.", "remaining_attempts": 2, "pin_locked_until": null }
+```
 
-The logged-in teller's own transactions for one day, newest first, as
-[Transaction](#transaction) objects. Default `per_page`: 50.
+After **3 wrong PINs in a row** withdrawals are locked for **15 minutes**
+(`BANK_PIN_MAX_ATTEMPTS`, `BANK_PIN_LOCK_MINUTES`); even the right PIN is refused
+until then. A correct PIN resets the counter; an admin PIN reset lifts the lock.
 
-| Query | Description |
-| --- | --- |
-| `date` | `YYYY-MM-DD`, default today |
+```json
+{
+  "message": "PIN diblokir sementara karena terlalu banyak percobaan salah. Coba lagi pukul 20:25.",
+  "remaining_attempts": 0,
+  "pin_locked_until": "2026-10-27T13:25:37.830610Z"
+}
+```
+
+#### `GET /teller/transactions?date=`
+
+The teller's own transactions for one day (default today), newest first, default
+`per_page` 50. Each includes `corrected_by` (the correction that reversed it, or null)
+and `authorized_by` (for corrections).
+
+#### `GET /teller/transactions/{id}/receipt`
+
+Receipt (struk) as PDF on 80 mm paper (`struk-4.pdf`): transaction number, date,
+account, name, class, amount, terbilang, balance after, teller and signature lines.
+Own transactions only (**404** otherwise).
 
 ---
 
-### Teller: daily report
+### Teller: corrections
 
-The end-of-day cash closing report (*Draf Penutupan Kas*). Totals are always
-computed by the server from the teller's transactions.
+#### `POST /teller/transactions/{id}/correct`
 
-**Submitting closes the counter:** after a report for today is `submitted` or
-`approved`, the teller cannot deposit or withdraw for the rest of the day. A
-supervisor rejection reopens it.
+Saved transactions are never edited. A mistake is reversed by a **correction**: a new
+transaction of the same amount in the opposite direction (`deposit_correction` /
+`withdrawal_correction`) with its own opposite journal lines, linked to the original.
 
-#### `GET /teller/daily-reports/preview`
+Rules:
 
-The printable draft: live totals and every transaction of the day. Saves nothing.
-
-| Query | Description |
-| --- | --- |
-| `date` | `YYYY-MM-DD`, today or earlier, default today |
-
-**200** (`report` is the stored [DailyReport](#dailyreport) for that date, or `null`)
-
-```json
-{
-  "data": {
-    "report_date": "2026-10-23",
-    "teller": { "id": 3, "full_name": "Teller Loket 1" },
-    "transaction_count": 5,
-    "total_deposit": 2300000,
-    "total_withdrawal": 25000,
-    "net_cash": 2275000,
-    "counter_closed": false,
-    "report": null,
-    "transactions": [
-      {
-        "id": 1,
-        "type": "deposit",
-        "amount": 500000,
-        "balance_before": 0,
-        "balance_after": 500000,
-        "created_at": "2026-10-23T06:17:21.000000Z",
-        "customer": { "id": 1, "account_number": "1000000001", "full_name": "Budi Santoso" }
-      }
-    ]
-  }
-}
-```
-
-#### `POST /teller/daily-reports`
-
-Submit (or resubmit after rejection) the report for a day. Any totals sent by the client are ignored.
+- Only the teller's **own** transaction (others return **404**), in the shift that is
+  **still running** (open, or reopened by a rejection).
+- Each transaction can be corrected **once**; corrections cannot be corrected.
+- Needs a **supervisor's username and password** (the correction passcode) and a reason.
+- Allowed on suspended accounts; a deposit correction may go below the minimum
+  balance but never below zero.
+- Rate limited to 10 per minute per teller. Supports `Idempotency-Key`.
 
 | Field | Rules |
 | --- | --- |
-| `date` | optional `YYYY-MM-DD`, today or earlier, default today |
-
-**201** new report, **200** resubmission of a rejected one. Resubmission recalculates the totals and clears the previous review.
-
-```json
-{
-  "data": {
-    "id": 1,
-    "report_date": "2026-10-23",
-    "transaction_count": 5,
-    "total_deposit": 2300000,
-    "total_withdrawal": 25000,
-    "net_cash": 2275000,
-    "status": "submitted",
-    "submitted_at": "2026-10-23T06:17:26.000000Z",
-    "reviewed_at": null,
-    "supervisor_note": null
-  }
-}
-```
-
-**422** `Laporan tanggal 2026-10-23 sudah submitted.` (or `sudah approved.`)
-
-#### `GET /teller/daily-reports`
-
-The teller's own reports, newest date first, as [DailyReport](#dailyreport) objects with `supervisor`. Default `per_page`: 15.
-
-#### `GET /teller/daily-reports/{id}`
-
-One of the teller's own reports. Another teller's report returns **404**.
-
----
-
-### Teller: cash drawer and transfers
-
-The cash that should be in a teller's drawer is derived from their transactions:
-
-```text
-drawer_balance          = cash_in (deposits) − cash_out (withdrawals) − transferred (approved transfers)
-available_for_transfer  = drawer_balance − pending (transfers waiting for approval)
-```
-
-#### `GET /teller/drawer`
+| `reason` | required, max 255 |
+| `supervisor_username`, `supervisor_password` | required, an active supervisor |
 
 ```json
-{
-  "data": {
-    "cash_in": 2300000,
-    "cash_out": 25000,
-    "transferred": 0,
-    "drawer_balance": 2275000,
-    "pending": 0,
-    "available_for_transfer": 2275000
-  }
-}
-```
-
-#### `GET /teller/cash-transfers`
-
-The teller's own transfers, newest first, as [CashTransfer](#cashtransfer) objects with `supervisor`. Default `per_page`: 15.
-
-#### `POST /teller/cash-transfers`
-
-Request moving cash from the drawer to the main vault. It stays `pending` until a supervisor reviews it.
-
-| Field | Rules |
-| --- | --- |
-| `amount` | required, integer, 1 – 1,000,000,000, at most `available_for_transfer` |
-| `note` | optional, max 1000 |
-
-```json
-{ "amount": 2000000, "note": "Setor ke brankas" }
+{ "reason": "Salah ketik, seharusnya Rp7.000", "supervisor_username": "supervisor", "supervisor_password": "password" }
 ```
 
 **201**
@@ -780,244 +693,170 @@ Request moving cash from the drawer to the main vault. It stays `pending` until 
 ```json
 {
   "data": {
-    "id": 1,
-    "source": "teller_drawer",
-    "destination": "main_vault",
-    "amount": 2000000,
-    "status": "pending",
-    "note": "Setor ke brankas",
-    "created_at": "2026-10-23T06:17:26.000000Z",
-    "reviewed_at": null,
-    "supervisor_note": null
+    "id": 7, "type": "deposit_correction", "type_label": "Koreksi setoran",
+    "amount": 70000, "amount_in_words": "tujuh puluh ribu rupiah",
+    "balance_before": 1070000, "balance_after": 1000000,
+    "created_at": "2026-10-27T13:10:38.000000Z", "daily_report_id": 2,
+    "corrects_transaction_id": 6, "note": "Salah ketik, seharusnya Rp7.000",
+    "authorized_by": { "id": 2, "full_name": "Supervisor Bank Mini" },
+    "customer": { "id": 3, "account_number": "RPL-2026-002", "full_name": "Citra Lestari" }
   }
 }
 ```
 
-**422** `Kas di laci teller tidak mencukupi. Maksimal yang dapat dipindahkan Rp275.000.`
+**422**: `errors.supervisor_password` = `Otorisasi supervisor gagal. ...`;
+`Transaksi ini sudah pernah dikoreksi.`; `Transaksi koreksi tidak dapat dikoreksi lagi.`;
+`Koreksi hanya dapat dilakukan pada shift tempat transaksi asli dicatat, ...`;
+`Saldo nasabah sudah tidak mencukupi untuk membatalkan setoran ini.`
 
 ---
 
 ### Supervisor: daily reports
 
+Reports are reviewed one at a time (no bulk approval).
+
 #### `GET /supervisor/daily-reports`
 
-Paginated [DailyReport](#dailyreport) objects with `teller` and `supervisor`, newest date first. Default `per_page`: 15.
+[DailyReport](#dailyreport) list with `teller` and `supervisor`, newest date first
+(default `per_page` 15). Open shifts show live totals.
 
 | Query | Description |
 | --- | --- |
-| `status` | `submitted`, `approved`, `rejected` |
+| `status` | `open`, `submitted`, `on_hold`, `approved`, `rejected` |
 | `date` | `YYYY-MM-DD` |
-| `teller_id` | Filter by teller |
+| `teller_id` | Filter by teller (see `GET /staff?role=teller`) |
 
 #### `GET /supervisor/daily-reports/{id}`
 
-One report plus the transactions it summarizes (top-level `transactions`), for verification.
+One report with its cash counts, `cash_transfer` and a top-level `transactions` list,
+to compare with the slips and the physical cash.
 
-```json
-{
-  "data": {
-    "id": 1,
-    "report_date": "2026-10-23",
-    "transaction_count": 5,
-    "total_deposit": 2300000,
-    "total_withdrawal": 25000,
-    "net_cash": 2275000,
-    "status": "submitted",
-    "submitted_at": "2026-10-23T06:17:26.000000Z",
-    "reviewed_at": null,
-    "supervisor_note": null,
-    "teller": { "id": 3, "full_name": "Teller Loket 1" },
-    "supervisor": null
-  },
-  "transactions": [
-    {
-      "id": 1,
-      "type": "deposit",
-      "amount": 500000,
-      "balance_before": 0,
-      "balance_after": 500000,
-      "created_at": "2026-10-23T06:17:21.000000Z",
-      "customer": { "id": 1, "account_number": "1000000001", "full_name": "Budi Santoso" }
-    }
-  ]
-}
-```
+#### `GET /supervisor/daily-reports/{id}/export`
+
+Same PDF as the teller's, same lock.
 
 #### `POST /supervisor/daily-reports/{id}/approve`
 
-| Field | Rules |
-| --- | --- |
-| `note` | optional, max 1000 |
-
-**200** the [DailyReport](#dailyreport) with `status: "approved"`, `reviewed_at` and `supervisor` set. Approved reports are final.
+`note` optional (max 1000). Allowed from `submitted` or `on_hold`. **Approval books
+the counted cash from the teller's drawer to the main vault** (soal 1c) and is final.
 
 ```json
 {
   "data": {
-    "id": 1,
-    "report_date": "2026-10-23",
-    "status": "approved",
-    "reviewed_at": "2026-10-23T06:17:26.000000Z",
-    "supervisor_note": "Sesuai",
-    "teller": { "id": 3, "full_name": "Teller Loket 1" },
+    "id": 2, "report_date": "2026-10-27", "status": "approved",
+    "opening_balance": 150000, "transaction_count": 5, "total_deposit": 132000, "total_withdrawal": 30000,
+    "system_balance": 252000, "physical_balance": 252000, "difference": 0,
+    "reviewed_at": "2026-10-27T13:10:39.000000Z", "supervisor_note": "Sesuai, kas diterima di brankas",
+    "teller": { "id": 3, "full_name": "Teller Loket 1", "class": "XI AK 1" },
     "supervisor": { "id": 2, "full_name": "Supervisor Bank Mini" },
+    "cash_transfer": { "id": 2, "amount": 252000, "transferred_at": "2026-10-27T13:10:39.000000Z" },
     "...": "other DailyReport fields"
   }
 }
 ```
 
-**422** `Laporan berstatus approved tidak dapat diproses lagi.` Only `submitted` reports can be reviewed.
+#### `POST /supervisor/daily-reports/{id}/hold`
+
+`note` **required**. From `submitted` to `on_hold` (pending, e.g. waiting for an
+original slip). The teller can still open the next day's shift.
 
 #### `POST /supervisor/daily-reports/{id}/reject`
 
-| Field | Rules |
-| --- | --- |
-| `note` | **required**, max 1000 |
+`note` **required**. From `submitted` or `on_hold` to `rejected`: the shift reopens so
+the teller can correct and close it again. Refused while the teller is running
+another shift (hold it instead).
 
-**200** the report with `status: "rejected"`. This reopens the teller's counter for that date so they can correct and resubmit. **422** if `note` is missing or the report is not `submitted`.
+**422** for any decision on a report not awaiting review:
+`Laporan berstatus "disetujui" tidak dapat diproses.`
 
 ---
 
-### Supervisor: cash transfers
+### Supervisor: vault ledger
 
 #### `GET /supervisor/cash-transfers`
 
-Paginated [CashTransfer](#cashtransfer) objects with `teller` and `supervisor`, newest first. Default `per_page`: 15.
+Read-only list of cash moved from teller drawers to the main vault (created by
+approvals), newest first, with `total_amount` for the filter.
 
 | Query | Description |
 | --- | --- |
-| `status` | `pending`, `approved`, `rejected` |
+| `from`, `to` | `YYYY-MM-DD` |
 | `teller_id` | Filter by teller |
+
+```json
+{
+  "data": [
+    {
+      "id": 2, "source": "teller_drawer", "destination": "main_vault",
+      "amount": 252000, "transferred_at": "2026-10-27T13:10:39.000000Z",
+      "daily_report": { "id": 2, "report_date": "2026-10-27", "teller": { "id": 3, "full_name": "Teller Loket 1" } },
+      "approved_by": { "id": 2, "full_name": "Supervisor Bank Mini" }
+    }
+  ],
+  "meta": { "current_page": 1, "per_page": 15, "total": 2 },
+  "total_amount": 2602000
+}
+```
 
 #### `GET /supervisor/cash-transfers/{id}`
 
-One transfer plus the teller's current drawer (top-level `drawer`), to check the amount against the cash that should be there.
-
-```json
-{
-  "data": {
-    "id": 1,
-    "source": "teller_drawer",
-    "destination": "main_vault",
-    "amount": 2000000,
-    "status": "pending",
-    "note": "Setor ke brankas",
-    "created_at": "2026-10-23T06:17:26.000000Z",
-    "reviewed_at": null,
-    "supervisor_note": null,
-    "teller": { "id": 3, "full_name": "Teller Loket 1" },
-    "supervisor": null
-  },
-  "drawer": {
-    "cash_in": 2300000,
-    "cash_out": 25000,
-    "transferred": 0,
-    "drawer_balance": 2275000,
-    "pending": 2000000,
-    "available_for_transfer": 275000
-  }
-}
-```
-
-#### `POST /supervisor/cash-transfers/{id}/approve`
-
-| Field | Rules |
-| --- | --- |
-| `note` | optional, max 1000 |
-
-Re-checks that the drawer still holds the amount, since withdrawals after the request may have paid cash out.
-
-**200**
-
-```json
-{
-  "data": {
-    "id": 1,
-    "amount": 2000000,
-    "status": "approved",
-    "reviewed_at": "2026-10-23T06:17:26.000000Z",
-    "supervisor_note": "Uang diterima di brankas",
-    "teller": { "id": 3, "full_name": "Teller Loket 1" },
-    "supervisor": { "id": 2, "full_name": "Supervisor Bank Mini" },
-    "...": "other CashTransfer fields"
-  }
-}
-```
-
-**422** `Pemindahan kas berstatus approved tidak dapat diproses lagi.` or `Kas di laci teller tidak mencukupi. ...`
-
-#### `POST /supervisor/cash-transfers/{id}/reject`
-
-| Field | Rules |
-| --- | --- |
-| `note` | **required**, max 1000 |
-
-**200** the transfer with `status: "rejected"`; its amount becomes available again. **422** if `note` is missing or the transfer is not `pending`.
+One transfer with its report and approver.
 
 ---
 
-### Audit (Admin, Supervisor)
+### Audit
 
-Read-only. There are no endpoints that create, change or delete transactions or
-journal lines (`POST`/`PUT`/`DELETE` return `404` or `405`).
+**Admin, Supervisor.** Read-only; there are no endpoints that write transactions or
+journal lines.
 
-#### `GET /audit/transactions`
-
-All transactions, newest first, as [Transaction](#transaction) objects with `customer` (closed accounts included) and `teller`. Default `per_page`: 15.
+Shared filters (interview: date range first, then teller and customer):
 
 | Query | Description |
 | --- | --- |
-| `from`, `to` | `YYYY-MM-DD`, inclusive |
-| `type` | `deposit` or `withdrawal` |
-| `teller_id` | Filter by teller |
-| `customer_id` | Filter by customer |
+| `from`, `to` | `YYYY-MM-DD` (whole day) or `YYYY-MM-DD HH:MM` (exact) |
+| `teller` | Teller name or username (contains) |
+| `customer` | Customer name, account number or NIS (contains) |
+| `type` | Transaction type |
+| `teller_id`, `customer_id` | Exact ids |
 
-#### `GET /audit/transactions/{id}`
+#### `GET /audit/transactions` · `GET /audit/transactions/{id}`
 
-One transaction with its two journal lines.
+The transaction log (real-time log), newest first (default `per_page` 15), with
+`customer`, `teller`, `authorized_by` and `corrected_by`. The detail adds `journals`.
 
 ```json
 {
   "data": {
-    "id": 4,
-    "type": "deposit",
-    "amount": 50000,
-    "balance_before": 500000,
-    "balance_after": 550000,
-    "created_at": "2026-10-23T06:17:25.000000Z",
-    "customer": { "id": 1, "account_number": "1000000001", "full_name": "Budi Santoso" },
+    "id": 6, "type": "deposit", "type_label": "Setor tunai", "amount": 70000,
+    "balance_before": 1000000, "balance_after": 1070000, "daily_report_id": 2,
+    "corrected_by": { "id": 7, "type": "deposit_correction", "created_at": "2026-10-27T13:10:38.000000Z" },
+    "customer": { "id": 3, "account_number": "RPL-2026-002", "full_name": "Citra Lestari" },
     "teller": { "id": 3, "full_name": "Teller Loket 1" },
     "journals": [
-      { "id": 8, "transaction_id": 4, "account_code": "201", "account_name": "Tabungan Nasabah", "position": "credit", "amount": 50000, "created_at": "2026-10-23T06:17:25.000000Z" },
-      { "id": 7, "transaction_id": 4, "account_code": "101", "account_name": "Kas", "position": "debit", "amount": 50000, "created_at": "2026-10-23T06:17:25.000000Z" }
-    ]
+      { "id": 12, "transaction_id": 6, "account_code": "201", "account_name": "Tabungan Nasabah", "position": "credit", "amount": 70000, "created_at": "..." },
+      { "id": 11, "transaction_id": 6, "account_code": "101", "account_name": "Kas", "position": "debit", "amount": 70000, "created_at": "..." }
+    ],
+    "...": "other Transaction fields"
   }
 }
 ```
 
 #### `GET /audit/journals`
 
-Journal lines, newest first, as [Journal](#journal) objects with a `transaction` summary. Default `per_page`: 30.
-
-| Query | Description |
-| --- | --- |
-| `from`, `to` | `YYYY-MM-DD`, inclusive |
-| `transaction_id` | Lines of one transaction |
-| `account_code` | `101` or `201` |
-| `position` | `debit` or `credit` |
+Journal lines, newest first (default `per_page` 30), with the transaction's teller
+and customer. Extra filters: `transaction_id`, `account_code`, `position`.
 
 ```json
 {
   "data": [
     {
-      "id": 10,
-      "transaction_id": 5,
-      "account_code": "101",
-      "account_name": "Kas",
-      "position": "credit",
-      "amount": 25000,
-      "created_at": "2026-10-23T06:17:25.000000Z",
-      "transaction": { "id": 5, "type": "withdrawal", "customer_id": 1, "user_id": 3 }
+      "id": 16, "transaction_id": 8, "account_code": "201", "account_name": "Tabungan Nasabah",
+      "position": "credit", "amount": 7000, "created_at": "2026-10-27T13:10:38.000000Z",
+      "transaction": {
+        "id": 8, "type": "deposit", "customer_id": 3, "user_id": 3,
+        "customer": { "account_number": "RPL-2026-002", "full_name": "Citra Lestari" },
+        "teller": { "full_name": "Teller Loket 1" }
+      }
     }
   ]
 }
@@ -1025,202 +864,182 @@ Journal lines, newest first, as [Journal](#journal) objects with a `transaction`
 
 #### `GET /audit/journals/summary`
 
-Debit and credit totals per account (a trial balance). Accepts the same filters
-as `/audit/journals`. `is_balanced` is `true` when total debit equals total credit,
-which double-entry guarantees.
+Trial balance per account with the same filters. Double entry guarantees `is_balanced`.
 
 ```json
 {
   "data": {
     "accounts": [
-      { "account_code": "101", "account_name": "Kas", "total_debit": 2300000, "total_credit": 25000 },
-      { "account_code": "201", "account_name": "Tabungan Nasabah", "total_debit": 25000, "total_credit": 2300000 }
+      { "account_code": "101", "account_name": "Kas", "total_debit": 2452000, "total_credit": 100000 },
+      { "account_code": "201", "account_name": "Tabungan Nasabah", "total_debit": 100000, "total_credit": 2452000 }
     ],
-    "total_debit": 2325000,
-    "total_credit": 2325000,
-    "is_balanced": true
+    "total_debit": 2552000, "total_credit": 2552000, "is_balanced": true
   }
 }
 ```
+
+---
+
+### Reports and PDF exports
+
+All exports are PDF (readable and printable, as requested in the interview; not CSV).
+List exports print at most 5,000 rows and say so when truncated.
+
+| Endpoint | Who | File | Content |
+| --- | --- | --- | --- |
+| `GET /audit/journals/export` | Admin, Supervisor | `jurnal-akuntansi.pdf` | Laporan keuangan: totals per account, balance check, every journal line with teller, customer and account number. Same filters as `/audit/journals` |
+| `GET /audit/transactions/export` | Admin, Supervisor | `jejak-audit-transaksi.pdf` | Audit trail with balances before/after and correction references. Same filters as `/audit/transactions` |
+| `GET /customers/{id}/statement?from=&to=` | Admin, Supervisor | `mutasi-RPL-2026-001.pdf` | Kartu simpanan: opening balance, every line with running balance, totals |
+| `GET /customer/statement/export?from=&to=` | Nasabah | `mutasi-RPL-2026-001.pdf` | The customer's own statement |
+| `GET /teller/transactions/{id}/receipt` | Teller (own) | `struk-4.pdf` | Receipt on 80 mm paper |
+| `GET /teller/daily-reports/{id}/export` | Teller (own) | `laporan-harian-....pdf` | Closing report; locked until balanced |
+| `GET /supervisor/daily-reports/{id}/export` | Supervisor | `laporan-harian-....pdf` | Same |
+| `GET /reports/annual?school_year=2026` | Admin, Supervisor | `laporan-tahunan-2026-2027.pdf` | One school year (July–June, default current): balance per product and per account (opening, deposits, withdrawals, closing; net of corrections) |
 
 ---
 
 ### Customer portal
 
-Everything is scoped to the account that owns the token. Parameters such as
-`?customer_id=` are ignored, and another customer's transaction returns `404`.
+**Nasabah.** Everything is scoped to the token's account; `?customer_id=` and similar
+parameters are ignored.
 
-#### `GET /customer/balance`
-
-```json
-{
-  "data": {
-    "account_number": "1000000001",
-    "full_name": "Budi Santoso",
-    "account_status": "active",
-    "balance": 525000,
-    "min_balance": 10000,
-    "as_of": "2026-10-23T06:17:26.374723Z"
-  }
-}
-```
-
-#### `GET /customer/transactions`
-
-Account statement (*mutasi rekening*), newest first, as [StatementLine](#statementline) objects. Default `per_page`: 20.
-
-| Query | Description |
+| Endpoint | Description |
 | --- | --- |
-| `from`, `to` | `YYYY-MM-DD`, inclusive |
-| `type` | `deposit` or `withdrawal` |
+| `GET /customer/me` | Own [Customer](#customer) |
+| `GET /customer/balance` | `{ "account_number": "RPL-2026-001", "full_name": "Budi Santoso", "account_status": "active", "balance": 595000, "min_balance": 10000, "as_of": "2026-10-27T13:10:40.302817Z" }` |
+| `GET /customer/card` | Digital card for the app, same shape as the admin card, with `qr_payload` to show as a QR code at the counter |
+| `GET /customer/transactions` | Statement, newest first, default `per_page` 20. Filters `from`, `to`, `type` |
+| `GET /customer/transactions/{id}` | One own line (**404** for others) |
+| `GET /customer/statement/export` | Own statement as PDF |
+| `POST /customer/pin` | Change PIN |
+| `POST /customer/logout` | Revoke the current token |
+
+Statement lines ([StatementLine](#statementline)) leave out tellers and journals:
 
 ```json
 {
   "data": [
-    { "id": 5, "type": "withdrawal", "direction": "out", "description": "Tarik tunai", "amount": 25000, "balance_after": 525000, "created_at": "2026-10-23T06:17:25.000000Z" },
-    { "id": 4, "type": "deposit", "direction": "in", "description": "Setor tunai", "amount": 50000, "balance_after": 550000, "created_at": "2026-10-23T06:17:25.000000Z" }
+    { "id": 5, "type": "withdrawal", "direction": "out", "description": "Tarik tunai", "amount": 30000, "balance_after": 595000, "created_at": "2026-10-27T13:10:37.000000Z" },
+    { "id": 4, "type": "deposit", "direction": "in", "description": "Setor tunai", "amount": 125000, "balance_after": 625000, "created_at": "2026-10-27T13:10:36.000000Z" }
   ]
 }
 ```
 
-#### `GET /customer/transactions/{id}`
+#### `POST /customer/pin`
 
-One [StatementLine](#statementline). **404** `{ "message": "Data tidak ditemukan." }` if it belongs to someone else.
+| Field | Rules |
+| --- | --- |
+| `current_pin` | required, 6 digits |
+| `new_pin` | required, 6 digits, different from `current_pin`, confirmed |
+| `new_pin_confirmation` | must equal `new_pin` |
+
+**200** `{ "message": "PIN berhasil diubah." }`. A wrong `current_pin` counts toward the
+same lock as withdrawals (**422** with `remaining_attempts`).
 
 ---
 
 ## Objects
 
-Passwords and PINs never appear in any response.
+Passwords, PINs and idempotency keys never appear in responses.
 
 ### Staff
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `id` | integer | |
-| `username` | string | |
-| `full_name` | string | |
-| `role` | string | `admin`, `supervisor`, `teller` |
-| `is_active` | boolean | `false` = access removed |
-| `created_at`, `updated_at` | timestamp | |
+`id`, `username`, `full_name`, `class` (nullable), `phone` (nullable), `role`,
+`is_active`, `created_at`, `updated_at`.
 
 ### Customer
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `id` | integer | |
-| `account_number` | string | 10 digits, generated |
-| `nis` | string | |
-| `full_name` | string | |
-| `class` | string | `X`, `XI`, `XII` |
-| `group` | string | `1`–`4` |
-| `major` | object | `{ id, major_name }` |
-| `account_status` | string | `active`, `suspended`, `inactive` |
-| `balance` | integer | Rupiah |
-| `created_at`, `updated_at` | timestamp | |
-| `deleted_at` | timestamp or null | Set when the account is closed |
-
-### CustomerSummary
-
-What a teller sees at the counter: `id`, `account_number`, `nis`, `full_name`,
-`class`, `group`, `major_name` (string), `account_status`, `balance`.
+| Field | Notes |
+| --- | --- |
+| `id`, `nis`, `full_name`, `class`, `group` | |
+| `account_number` | e.g. `RPL-2026-001`, generated |
+| `major` | `{ id, code, major_name }` |
+| `account_status` | `active`, `suspended`, `inactive` |
+| `balance` | Rupiah |
+| `created_at`, `updated_at`, `deleted_at` | `deleted_at` is set when the account is closed |
 
 ### Transaction
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `id` | integer | |
-| `type` | string | `deposit`, `withdrawal` |
-| `amount` | integer | Always > 0 |
-| `balance_before` | integer | Customer balance before |
-| `balance_after` | integer | Customer balance after |
-| `created_at` | timestamp | |
-| `customer` | object | `{ id, account_number, full_name }` |
-| `teller` | object | `{ id, full_name }`, audit endpoints only |
-| `journals` | Journal[] | `GET /audit/transactions/{id}` only |
+| Field | Notes |
+| --- | --- |
+| `id`, `type`, `type_label` | Label in Indonesian (`Setor tunai`, `Koreksi setoran`, ...) |
+| `amount`, `amount_in_words` | Always > 0; terbilang for slips and receipts |
+| `balance_before`, `balance_after` | Customer balance around the transaction |
+| `created_at`, `daily_report_id` | The shift it belongs to |
+| `corrects_transaction_id`, `note` | Corrections: the reversed transaction and the reason |
+| `authorized_by` | Corrections: `{ id, full_name }` of the supervisor |
+| `corrected_by` | Ordinary transactions: `{ id, type, created_at }` of the correction, or null |
+| `customer` | `{ id, account_number, full_name }` |
+| `teller` | `{ id, full_name }`, audit endpoints |
+| `journals` | `GET /audit/transactions/{id}` only |
 
 ### Journal
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `id` | integer | |
-| `transaction_id` | integer | Every transaction has exactly two lines |
-| `account_code` | string | `101`, `201` |
-| `account_name` | string | `Kas`, `Tabungan Nasabah` |
-| `position` | string | `debit`, `credit` (one of each per transaction) |
-| `amount` | integer | Equals the transaction amount |
-| `created_at` | timestamp | |
-| `transaction` | object | `{ id, type, customer_id, user_id }`, on `/audit/journals` |
+`id`, `transaction_id`, `account_code`, `account_name`, `position`, `amount` (equals
+the transaction amount; exactly one debit and one credit per transaction),
+`created_at`, and on `/audit/journals` a `transaction` summary with customer and teller.
 
 ### DailyReport
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `id` | integer | |
-| `report_date` | date | `YYYY-MM-DD` |
-| `transaction_count` | integer | |
-| `total_deposit` | integer | |
-| `total_withdrawal` | integer | |
-| `net_cash` | integer | `total_deposit − total_withdrawal` |
-| `status` | string | `submitted`, `approved`, `rejected` |
-| `submitted_at` | timestamp | |
-| `reviewed_at` | timestamp or null | |
-| `supervisor_note` | string or null | |
-| `teller` | object | `{ id, full_name }`, supervisor endpoints |
-| `supervisor` | object or null | `{ id, full_name }` of the reviewer |
+| Field | Notes |
+| --- | --- |
+| `id`, `report_date`, `status` | One per teller per day |
+| `opening_balance`, `opened_at` | Saldo awal |
+| `transaction_count`, `total_deposit`, `total_withdrawal` | Net of corrections; live while open |
+| `system_balance` | `opening_balance + total_deposit − total_withdrawal` |
+| `physical_balance`, `difference` | Counted cash and `physical − system` (0 once closed); null while open |
+| `submitted_at`, `reviewed_at`, `supervisor_note` | |
+| `teller` | `{ id, full_name, class }` |
+| `supervisor` | `{ id, full_name }` of the reviewer, or null |
+| `opening_counts`, `closing_counts` | `[{ denomination, quantity, subtotal }]` |
+| `cash_transfer` | `{ id, amount, transferred_at }` after approval, or null |
 
 ### CashTransfer
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `id` | integer | |
-| `source` | string | Always `teller_drawer` |
-| `destination` | string | Always `main_vault` |
-| `amount` | integer | |
-| `status` | string | `pending`, `approved`, `rejected` |
-| `note` | string or null | From the teller |
-| `created_at` | timestamp | When it was requested |
-| `reviewed_at` | timestamp or null | |
-| `supervisor_note` | string or null | |
-| `teller` | object | `{ id, full_name }`, supervisor endpoints |
-| `supervisor` | object or null | `{ id, full_name }` of the reviewer |
+`id`, `source` (`teller_drawer`), `destination` (`main_vault`), `amount`,
+`transferred_at`, `daily_report` `{ id, report_date, teller }`, `approved_by`
+`{ id, full_name }`.
 
 ### StatementLine
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `id` | integer | |
-| `type` | string | `deposit`, `withdrawal` |
-| `direction` | string | `in`, `out` |
-| `description` | string | `Setor tunai`, `Tarik tunai` |
-| `amount` | integer | |
-| `balance_after` | integer | Balance after this line |
-| `created_at` | timestamp | |
+`id`, `type`, `direction` (`in`/`out`), `description`, `amount`, `balance_after`, `created_at`.
 
 ---
 
 ## Workflows
 
-### Serving a customer at the counter (Teller)
+### Teller's day
 
-1. `GET /teller/customers/lookup?identifier=1000000001` to confirm name, status and balance.
-2. `POST /teller/deposits` or `POST /teller/withdrawals` with `account_number` and `amount`.
-3. Print a receipt from the response (`balance_before`, `balance_after`).
+1. `POST /login`, then `GET /teller/shift`. If `data` is null, count the drawer and
+   `POST /teller/shift/open`.
+2. For each customer: scan the card QR (or type the account number/NIS) →
+   `GET /teller/customers/lookup` → check name, status and balance.
+3. Deposit: `POST /teller/deposits` with a new `Idempotency-Key`. Withdrawal: the
+   customer types their PIN on the confirmation screen → `POST /teller/withdrawals`.
+4. Print `GET /teller/transactions/{id}/receipt`.
+5. Mistake? `POST /teller/transactions/{id}/correct` with the supervisor's credentials,
+   then record the right amount.
+6. End of shift: count the cash → `POST /teller/shift/close`. On a mismatch, recount
+   and check the slips; correct if needed. Then print `GET /teller/daily-reports/{id}/export`.
 
-### End of day
+### Supervisor's review
 
-1. Teller: `GET /teller/daily-reports/preview`, print it and count the cash.
-2. Teller: `POST /teller/daily-reports`. The counter is now closed for today.
-3. Supervisor: `GET /supervisor/daily-reports?status=submitted`, then `GET /supervisor/daily-reports/{id}` to compare against the transactions.
-4. Supervisor: `POST .../approve`, or `POST .../reject` with a note. A rejection reopens the counter; the teller fixes things and submits again.
+1. `GET /supervisor/daily-reports?status=submitted` (pending list).
+2. `GET /supervisor/daily-reports/{id}`: compare transactions and counts with the slips and cash.
+3. `approve` (cash goes to the vault, see `GET /supervisor/cash-transfers`), `hold`
+   with a note, or `reject` with a note (the teller corrects and closes again).
+4. Investigations: `GET /audit/transactions?from=...&to=...&teller=...&customer=...`.
 
-### Moving cash to the vault
+### Administrator
 
-1. Teller: `GET /teller/drawer`, then `POST /teller/cash-transfers` with an amount up to `available_for_transfer`.
-2. Supervisor: `GET /supervisor/cash-transfers?status=pending`, then `GET /supervisor/cash-transfers/{id}` to see the drawer.
-3. Supervisor: `POST .../approve` once the cash is in the vault, or `POST .../reject` with a note.
+- Staff: create, import from a spreadsheet, block/unblock, delete unused accounts.
+- Accounts: open (number generated), print the card with QR, reset PIN, suspend,
+  graduate (`deactivate`).
+- Settings: minimum balance and scanner mode.
+- Reports: journal, audit trail and annual report as PDF.
 
-### Graduation
+### Customer (mobile app)
 
-1. Optional: Teller pays out the remaining balance with `POST /teller/withdrawals` (the minimum balance still applies).
-2. Admin: `POST /admin/customers/{id}/deactivate`. The student can no longer log in; history stays available under `/customers?trashed=with` and in the audit endpoints.
+`POST /login` with NIS/account number and PIN → `GET /customer/balance`,
+`GET /customer/transactions`, `GET /customer/card` (show the QR at the counter),
+`POST /customer/pin`, `POST /customer/logout`.

@@ -31,9 +31,29 @@ test('seeded balances match the transaction history and the journal', function (
         ->and($customers->every(fn ($customer) => $customer->balance === $customer->transactions()->latest('id')->value('balance_after')))->toBeTrue();
 });
 
-test('demo accounts can log in', function () {
+test('opening balances are recorded in yesterday\'s approved shift, so today starts clean', function () {
+    $this->travelTo(Illuminate\Support\Carbon::parse('2026-10-27 08:00:00'));
     $this->seed();
 
-    $this->postJson('/api/staff/login', ['username' => 'admin', 'password' => 'password'])->assertOk();
-    $this->postJson('/api/customer/login', ['identifier' => '20260001', 'pin' => '123456'])->assertOk();
+    $teller = User::firstWhere('username', 'teller');
+    $report = App\Models\DailyReport::sole();
+
+    expect($report->teller_id)->toBe($teller->id)
+        ->and($report->report_date->toDateString())->toBe('2026-10-26')
+        ->and($report->status)->toBe(App\Enums\ReportStatus::APPROVED)
+        ->and($report->opening_balance)->toBe(100000)
+        ->and($report->physical_balance)->toBe(2350000)
+        ->and($report->cashTransfer->amount)->toBe(2350000)
+        ->and(app(App\Services\DailyReportService::class)->activeShift($teller))->toBeNull()
+        ->and(Customer::orderBy('nis')->pluck('account_number')->all())->toBe(['RPL-2026-001', 'DKV-2026-001', 'RPL-2026-002'])
+        ->and(now()->toDateTimeString())->toBe('2026-10-27 08:00:00');
+});
+
+test('demo accounts can log in and the teller can open today\'s shift', function () {
+    $this->seed();
+
+    $token = $this->postJson('/api/login', ['username' => 'teller', 'password' => 'password'])->assertOk()->json('data.token');
+    $this->postJson('/api/login', ['identifier' => '20260001', 'pin' => '123456'])->assertOk();
+
+    $this->withToken($token)->postJson('/api/teller/shift/open', ['denominations' => ['50000' => 2]])->assertCreated();
 });

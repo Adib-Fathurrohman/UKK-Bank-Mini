@@ -14,6 +14,10 @@ class DailyReport extends Model
 {
     protected $attributes = [
         'status' => 'open',
+        'opening_balance' => 0,
+        'transaction_count' => 0,
+        'total_deposit' => 0,
+        'total_withdrawal' => 0,
     ];
 
     protected $fillable = [

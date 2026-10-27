@@ -25,7 +25,7 @@ class TransactionController extends Controller
     public function index(Request $request): AnonymousResourceCollection
     {
         $transactions = $this->filtered($request)
-            ->with(['customer', 'teller', 'authorizer'])
+            ->with(['customer', 'teller', 'authorizer', 'correction'])
             ->latest('id')
             ->paginate($this->perPage($request));
 

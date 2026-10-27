@@ -584,6 +584,32 @@ database bersih.
 - [x] Middleware role melindungi route.
 - [x] Test unit dan feature tersedia.
 
+### Tambahan dari Soal UKK dan wawancara pengguna
+
+Soal UKK (Paket 1 RPL-2026) dan wawancara dengan pengelola Bank Mini menambah
+kebutuhan berikut di luar PRD awal.
+
+- [x] Satu pintu login untuk semua role (`POST /api/login`).
+- [x] Supervisor dapat membaca data user (matriks RBAC: R).
+- [x] Admin dapat memblokir dan menghapus user (hapus hanya jika belum punya riwayat).
+- [x] Nomor rekening otomatis `KODE JURUSAN-TAHUN AJARAN-NO URUT` (contoh `RPL-2026-001`).
+- [x] Konfigurasi global oleh admin: saldo minimum dan mode pemindai QR.
+- [x] Pencarian nasabah via scan QR kartu (kartu cetak dan kartu digital di aplikasi).
+- [x] PIN 6 digit nasabah sebagai otorisasi setiap penarikan, dengan blokir setelah 3 kali salah.
+- [x] Shift teller: saldo awal per pecahan, transaksi hanya dalam shift yang dibuka.
+- [x] Penutupan kas: saldo awal + setoran − penarikan harus sama dengan uang fisik;
+      laporan terkunci (tidak bisa ditutup/dicetak) jika ada selisih.
+- [x] Approval laporan otomatis memindahkan kas dari laci teller ke brankas utama.
+- [x] Supervisor dapat menahan (pending) laporan.
+- [x] Transaksi koreksi (setoran/penarikan koreksi) dengan otorisasi supervisor.
+- [x] Idempotency key agar transaksi tidak tercatat ganda saat koneksi terputus.
+- [x] Identitas teller (kelas, nomor WhatsApp) dan impor teller massal dari spreadsheet.
+- [x] Filter audit berdasarkan rentang waktu, nama teller, nama nasabah, dan nomor rekening.
+- [x] Ekspor PDF: jurnal akuntansi, jejak audit, mutasi nasabah, struk, laporan harian,
+      dan laporan tahunan (kartu simpanan dan saldo per produk).
+- [ ] Integrasi absensi teller (di luar cakupan).
+- [ ] Pemisahan produk Tabungan Siswa dan Tabungan Karyawan (soal hanya mendefinisikan akun 201).
+
 ## 5. Definisi Selesai
 
 Proyek dianggap siap untuk demo UKK jika:

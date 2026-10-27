@@ -1,11 +1,14 @@
 # E-Teller Bank Mini Sekolah
 
-Backend API untuk sistem perbankan internal sekolah (proyek UKK): setor dan tarik
-tunai siswa, jurnal akuntansi entri ganda, laporan harian teller dengan approval
-supervisor, dan pemindahan kas ke brankas. Spesifikasi lengkap ada di
-[PRD.md](PRD.md); urutan pengerjaan di [RENCANA_PENGEMBANGAN.md](RENCANA_PENGEMBANGAN.md).
+Backend API untuk sistem perbankan internal sekolah (proyek UKK Paket 1 RPL-2026):
+setor dan tarik tunai siswa di loket, jurnal akuntansi entri ganda, shift teller
+dengan penutupan kas, approval supervisor yang memindahkan kas ke brankas, dan
+portal nasabah. Spesifikasi ada di [PRD.md](PRD.md); urutan pengerjaan di
+[RENCANA_PENGEMBANGAN.md](RENCANA_PENGEMBANGAN.md); dokumentasi API lengkap di
+[docs/API.md](docs/API.md).
 
-**Teknologi:** Laravel 13 (PHP 8.3+), MariaDB, Laravel Sanctum (token API), Pest.
+**Teknologi:** Laravel 13 (PHP 8.3+), MariaDB (InnoDB), Laravel Sanctum (token
+API), DomPDF (laporan PDF), OpenSpout (impor spreadsheet), Pest.
 
 ## Instalasi
 
@@ -32,8 +35,12 @@ DB_USERNAME=bank-db-user
 DB_PASSWORD=ganti-password
 
 APP_TIMEZONE=Asia/Jakarta
-BANK_MIN_BALANCE=10000     # saldo minimum setelah penarikan (Rupiah)
-SANCTUM_EXPIRATION=480     # masa berlaku token dalam menit
+BANK_NAME="Bank Mini Sekolah"   # dicetak di struk dan laporan
+BANK_SCHOOL="SMK"
+BANK_MIN_BALANCE=10000          # nilai awal saldo minimum (admin dapat mengubahnya)
+BANK_PIN_MAX_ATTEMPTS=3         # PIN salah berturut-turut sebelum diblokir
+BANK_PIN_LOCK_MINUTES=15        # lama blokir PIN
+SANCTUM_EXPIRATION=480          # masa berlaku token dalam menit
 ```
 
 Jalankan migration, seeder, dan server:
@@ -43,8 +50,17 @@ php artisan migrate:fresh --seed
 php artisan serve
 ```
 
-Seeder aman dijalankan ulang. Saldo awal nasabah demo dibuat lewat transaksi
-setor sungguhan, sehingga saldo, mutasi, dan jurnal selalu konsisten.
+Agar aplikasi mobile di HP dapat mengakses API, jalankan server di semua
+antarmuka jaringan dan gunakan IP laptop di jaringan yang sama:
+
+```bash
+php artisan serve --host=0.0.0.0 --port=8000
+```
+
+Seeder aman dijalankan ulang. Saldo awal nasabah demo dibuat lewat transaksi setor
+sungguhan di dalam shift teller tanggal kemarin yang sudah ditutup dan disetujui,
+sehingga saldo, mutasi, jurnal, dan brankas konsisten, dan teller dapat membuka
+shift baru hari ini.
 
 ## Akun demo
 
@@ -53,9 +69,10 @@ setor sungguhan, sehingga saldo, mutasi, dan jurnal selalu konsisten.
 | Administrator | `admin` | `password` |
 | Supervisor | `supervisor` | `password` |
 | Teller | `teller` | `password` |
-| Nasabah | NIS `20260001`–`20260003` atau rekening `1000000001`–`1000000003` | PIN `123456` |
+| Nasabah | NIS `20260001`–`20260003` atau rekening `RPL-2026-001`, `DKV-2026-001`, `RPL-2026-002` | PIN `123456` |
 
-Ganti semua password dan PIN demo sebelum dipakai di luar lingkungan ujian.
+Semua aktor login lewat satu endpoint, `POST /api/login`. Ganti semua password
+dan PIN demo sebelum dipakai di luar lingkungan ujian.
 
 ## Pengujian
 
@@ -79,65 +96,45 @@ DB_CONNECTION=mariadb DB_DATABASE=test_bank_mini php artisan test
 Jika user database tidak memiliki izin tersebut, berikan dulu sebagai root:
 `GRANT ALL PRIVILEGES ON test_bank_mini.* TO 'bank-db-user'@'localhost';`
 
-## Autentikasi
+## Alur utama
 
-Semua endpoint (kecuali login) membutuhkan header `Authorization: Bearer <token>`
-dan `Accept: application/json`.
+| Aktor | Alur |
+| --- | --- |
+| Teller | Buka shift (hitung saldo awal per pecahan) → scan QR kartu nasabah atau ketik nomor rekening/NIS → setor, atau tarik dengan PIN yang diketik nasabah → cetak struk → koreksi jika salah ketik (otorisasi supervisor) → tutup shift (hitung uang fisik, harus sama dengan saldo sistem) → cetak laporan harian |
+| Supervisor | Periksa laporan satu per satu → setujui (kas otomatis pindah ke brankas), tahan dengan catatan, atau tolak (shift dibuka kembali untuk koreksi) → telusuri log audit dan jurnal |
+| Administrator | Kelola staf (buat, impor spreadsheet, blokir, hapus yang belum pernah dipakai), buka rekening (nomor otomatis `KODE-TAHUN-URUT`), cetak kartu QR, reset PIN, nonaktifkan lulusan, atur saldo minimum dan mode pemindai, unduh laporan PDF |
+| Nasabah | Lihat saldo, mutasi, kartu digital dengan QR, unduh mutasi PDF, ganti PIN |
 
-```http
-POST /api/staff/login      { "username": "teller", "password": "password" }
-POST /api/customer/login   { "identifier": "20260001", "pin": "123456" }
-```
-
-Respons login berisi `data.token`. Login dibatasi 5 percobaan per menit per
-akun dan IP.
-
-## Endpoint
-
-Dokumentasi lengkap setiap endpoint (parameter, aturan validasi, contoh respons,
-dan kode error) ada di [docs/API.md](docs/API.md).
-
-| Aktor | Method & URL | Keterangan |
-| --- | --- | --- |
-| Staf | `GET /api/staff/me`, `POST /api/staff/logout` | Profil dan logout |
-| Staf | `GET /api/majors` | Daftar jurusan |
-| Admin | `GET/POST /api/admin/staff`, `GET/PATCH/DELETE /api/admin/staff/{id}` | Kelola teller & supervisor. `DELETE` menonaktifkan akun |
-| Admin | `POST /api/admin/customers`, `PATCH /api/admin/customers/{id}` | Buka rekening (nomor dibuat sistem), ubah data/status/PIN |
-| Admin | `POST /api/admin/customers/{id}/deactivate` | Kelulusan: status `inactive` + soft delete |
-| Admin, Supervisor | `GET /api/customers`, `GET /api/customers/{id}` | Daftar rekening (`search`, `major_id`, `class`, `status`, `trashed=with\|only`) |
-| Admin, Supervisor | `GET /api/audit/transactions`, `GET /api/audit/transactions/{id}` | Log transaksi beserta jurnal (read-only) |
-| Admin, Supervisor | `GET /api/audit/journals`, `GET /api/audit/journals/summary` | Jurnal akuntansi dan neraca saldo (read-only) |
-| Teller | `GET /api/teller/customers/lookup?identifier=` | Cari nasabah via nomor rekening/NIS |
-| Teller | `POST /api/teller/deposits`, `POST /api/teller/withdrawals` | `{ "account_number", "amount" }` |
-| Teller | `GET /api/teller/transactions?date=` | Transaksi milik teller per hari |
-| Teller | `GET /api/teller/daily-reports/preview?date=` | Draf penutupan kas (untuk dicetak) |
-| Teller | `GET/POST /api/teller/daily-reports`, `GET /api/teller/daily-reports/{id}` | Kirim dan lihat laporan harian |
-| Teller | `GET /api/teller/drawer`, `GET/POST /api/teller/cash-transfers` | Kas di laci dan pengajuan pemindahan ke brankas |
-| Supervisor | `GET /api/supervisor/daily-reports`, `GET .../{id}`, `POST .../{id}/approve\|reject` | Verifikasi laporan harian |
-| Supervisor | `GET /api/supervisor/cash-transfers`, `GET .../{id}`, `POST .../{id}/approve\|reject` | Otorisasi pemindahan kas |
-| Nasabah | `GET /api/customer/me`, `GET /api/customer/balance` | Profil dan saldo |
-| Nasabah | `GET /api/customer/transactions`, `GET /api/customer/transactions/{id}` | Mutasi rekening (`from`, `to`, `type`) |
-
-Daftar menggunakan pagination (`?page=`, `?per_page=` maksimal 100). Role yang
-salah mendapat `403`, tanpa token `401`, pelanggaran aturan bisnis `422` dengan
-`message`.
+Daftar endpoint, parameter, dan contoh respons ada di [docs/API.md](docs/API.md).
 
 ## Aturan bisnis utama
 
 - **Atomik:** ubah saldo, catat transaksi, dan dua baris jurnal berada dalam satu
-  `DB::transaction()` dengan row lock pada nasabah. Jika satu langkah gagal,
-  semuanya dibatalkan.
+  `DB::transaction()` dengan row lock (teller → shift → nasabah). Jika satu langkah
+  gagal, semuanya dibatalkan.
 - **Jurnal entri ganda:** setor = Debit 101 Kas / Kredit 201 Tabungan Nasabah;
-  tarik = Debit 201 Tabungan Nasabah / Kredit 101 Kas.
-- **Saldo minimum:** penarikan ditolak jika sisa saldo di bawah `BANK_MIN_BALANCE`.
+  tarik = kebalikannya. Transaksi koreksi dibukukan berlawanan dengan transaksi
+  yang dibatalkan.
+- **Saldo minimum:** penarikan ditolak jika sisa saldo di bawah saldo minimum
+  (pengaturan admin, awal Rp10.000).
+- **PIN penarikan:** setiap penarikan wajib PIN 6 digit nasabah; 3 kali salah
+  memblokir penarikan selama 15 menit.
+- **Shift dan penutupan kas:** transaksi hanya dapat dicatat dalam shift yang
+  dibuka hari ini. Shift hanya dapat ditutup (dan laporannya dicetak) jika uang
+  fisik = saldo awal + setoran − penarikan.
+- **Approval:** supervisor menyetujui laporan satu per satu; persetujuan otomatis
+  mencatat pemindahan kas dari laci teller ke brankas utama.
+- **Koreksi, bukan edit:** transaksi tersimpan tidak dapat diubah. Salah ketik
+  dibatalkan dengan transaksi koreksi (sekali per transaksi, dalam shift yang
+  sama, dengan username dan password supervisor).
+- **Idempotency:** header `Idempotency-Key` mencegah transaksi tercatat dua kali
+  saat koneksi terputus dan permintaan diulang.
 - **Status rekening:** `active` dapat bertransaksi; `suspended` hanya dapat login
   dan melihat saldo; `inactive` (lulus) tidak dapat login dan di-soft delete.
-- **Penutupan loket:** setelah teller mengirim laporan harian, teller tersebut
-  tidak dapat bertransaksi lagi pada tanggal itu kecuali laporan ditolak supervisor.
-- **Pemindahan kas:** jumlah tidak boleh melebihi kas di laci teller (setor −
-  tarik − pemindahan yang disetujui). Pemindahan kas tidak membuat jurnal karena
-  kas tetap berada di bank.
 - **Audit trail:** transaksi, jurnal, laporan yang disetujui, dan pemindahan kas
-  yang sudah diproses tidak dapat diubah atau dihapus. Foreign key memakai
-  `ON DELETE RESTRICT`, dan nominal dilindungi `CHECK (amount > 0)` di database.
-- Password staf dan PIN nasabah di-hash (bcrypt) dan tidak pernah muncul di respons API.
+  tidak dapat diubah atau dihapus. Foreign key memakai `ON DELETE RESTRICT`, dan
+  database memakai `CHECK` untuk nominal > 0, saldo ≥ 0, pecahan uang, dan
+  keterkaitan transaksi koreksi.
+- **Keamanan:** password staf dan PIN nasabah di-hash (bcrypt) dan tidak pernah
+  muncul di respons API. Setiap endpoint memeriksa token dan role sebelum query
+  dijalankan; role yang salah selalu mendapat `403`.

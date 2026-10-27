@@ -264,7 +264,7 @@ class DailyReportService
         $report = DailyReport::whereKey($report->id)->lockForUpdate()->firstOrFail();
 
         if (! $report->status->isAwaitingReview()) {
-            throw new InvalidStatusTransitionException("Laporan berstatus {$report->status->value} tidak dapat diproses.");
+            throw new InvalidStatusTransitionException('Laporan berstatus "'.strtolower($report->status->label()).'" tidak dapat diproses.');
         }
 
         return $report;

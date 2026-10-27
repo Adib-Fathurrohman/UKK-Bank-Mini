@@ -54,7 +54,7 @@ class ShiftController extends Controller
     {
         $shift = $this->reports->open($request->user(), $request->counts());
 
-        return new DailyReportResource($shift->load('openingCounts'));
+        return new DailyReportResource($this->reports->withLiveTotals($shift)->load('openingCounts'));
     }
 
     /**
