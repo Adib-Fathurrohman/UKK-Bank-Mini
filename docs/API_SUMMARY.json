@@ -1,7 +1,7 @@
 {
   "name": "E-Teller Bank Mini API",
   "source_of_truth": "Laravel backend implementation (routes, form requests, controllers, services, resources). This file is a generated index; see docs/API.md for examples.",
-  "generated_from_commit": "c405986-dirty",
+  "generated_from_commit": "2cc6b58",
   "base_url": "{APP_URL}/api (UNKNOWN for deployments; local default http://localhost:8000/api)",
   "conventions": {
     "headers": {
