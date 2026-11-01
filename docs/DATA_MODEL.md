@@ -17,6 +17,7 @@ Major 1 ──── * Customer 1 ──── * Transaction * ──── 1 Da
                                     └── 2 AccountingJournal
 User (supervisor) 1 ──── * DailyReport (reviewed)      Setting * ──── 1 User (admin, updated_by)
 User (supervisor) 1 ──── * Transaction (authorized corrections)
+WithdrawalAuthorization * ── 1 User (teller), 1 Customer, 1 DailyReport; 0..1 ── 1 Transaction (consumed)
 ```
 
 Foreign keys use `ON DELETE RESTRICT`: anything with history cannot be deleted.
@@ -58,7 +59,7 @@ Students' savings accounts (nasabah). Resources: `CustomerResource` (full),
 | `balance` | integer | no | Current balance; never negative (DB CHECK) |
 | `created_at`, `updated_at` | timestamp | no | |
 | `deleted_at` | timestamp | yes | Set when the account is closed (graduated) |
-| `pin_locked_until` | timestamp | yes | **Lookup only.** Withdrawals are refused until then (shown only while in the future) |
+| `pin_locked_until` | timestamp | yes | **Lookup only.** The PIN is locked until then: login, approval and withdrawals are refused (shown only while in the future) |
 | `qr_payload` | string | no | **Card only.** `BANKMINI:{account_number}`; render as a QR code |
 
 Never returned: `pin` (hash), `pin_failed_attempts`.
@@ -156,6 +157,7 @@ Immutable money movement. Resource: `TransactionResource` (staff),
 | `customer` | object | — | `{id, account_number, full_name}` |
 | `teller` | object | — | `{id, full_name}`; audit endpoints |
 | `journals` | array | — | `GET /audit/transactions/{id}` only |
+| `withdrawal_authorization` | object | — | Withdrawals approved in the mobile app: `{id, method: "mobile", approved_at}` (on `complete` and the audit detail) |
 
 Customer statement line: `{id, type, direction, description, amount, balance_after,
 created_at}`; `direction` is `in` or `out`.
@@ -167,7 +169,7 @@ Never returned: `idempotency_key`.
 | Type | Label | Balance | Journal (debit / credit) | Created by |
 | --- | --- | --- | --- | --- |
 | `deposit` | Setor tunai | + amount | 101 Kas / 201 Tabungan | `POST /teller/deposits` |
-| `withdrawal` | Tarik tunai | − amount | 201 Tabungan / 101 Kas | `POST /teller/withdrawals` |
+| `withdrawal` | Tarik tunai | − amount | 201 Tabungan / 101 Kas | `POST /teller/withdrawal-authorizations/{id}/complete` (mobile approval) or `POST /teller/withdrawals` (PIN at the terminal) |
 | `deposit_correction` | Koreksi setoran | − amount | 201 Tabungan / 101 Kas | Correction of a deposit |
 | `withdrawal_correction` | Koreksi penarikan | + amount | 101 Kas / 201 Tabungan | Correction of a withdrawal |
 
@@ -194,20 +196,60 @@ supervisor approves a report with counted cash > 0. `{id, source: "teller_drawer
 destination: "main_vault", amount, transferred_at, daily_report: {id, report_date,
 teller}, approved_by: {id, full_name}}`. Immutable.
 
+## Withdrawal authorization (`withdrawal_authorizations`)
+
+A withdrawal the teller started and the customer approves in the mobile app. Resources:
+`WithdrawalAuthorizationResource` (teller), `CustomerWithdrawalAuthorizationResource`
+(customer). Never deleted; finished rows cannot be changed.
+
+| Field | Type | Nullable | Meaning |
+| --- | --- | --- | --- |
+| `id` | string (ULID) | no | `public_id` column; used in URLs. The integer key is never exposed |
+| `status` | enum | no | See below |
+| `status_label` | string | no | Indonesian label |
+| `amount`, `amount_in_words` | integer, string | no | Bound amount (DB CHECK > 0) |
+| `customer` | object | — | Teller view: `{id, account_number, full_name, class}` |
+| `account_number`, `balance`, `balance_after` | — | — | Customer view; `balance_after` is a preview, `null` once not open |
+| `teller` | object | — | Customer view: `{full_name}` |
+| `daily_report_id` | integer | no | Teller view: the shift it belongs to |
+| `created_at`, `expires_at` | timestamp | no | Customer must decide before `expires_at` (120 s) |
+| `approved_at`, `approval_expires_at` | timestamp | yes | Teller must complete before `approval_expires_at` (120 s after approval) |
+| `rejected_at`, `cancelled_at`, `cancel_reason` | timestamp, string | yes | Teller view. `cancel_reason`: `teller`, `shift_closed` |
+| `consumed_at` | timestamp | yes | When the withdrawal was recorded |
+| `transaction_id` | integer | yes | Teller view: the withdrawal (unique: one transaction per request) |
+| `server_time` | timestamp | no | Server clock, for countdowns |
+
+There is no PIN column.
+
+### Authorization statuses
+
+| Status | Label | Open | Next |
+| --- | --- | :-: | --- |
+| `pending` | Menunggu persetujuan nasabah | ✓ | `approved`, `rejected`, `cancelled`, `expired` |
+| `approved` | Disetujui nasabah | ✓ | `consumed`, `cancelled`, `expired` |
+| `consumed` | Selesai | | — |
+| `rejected` | Ditolak nasabah | | — |
+| `cancelled` | Dibatalkan | | — |
+| `expired` | Kedaluwarsa | | — |
+
+At most one open request per customer and per teller.
+
 ## Settings (`settings`)
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `min_balance` | integer 0–1,000,000 | 10000 | Balance that must remain after a withdrawal |
 | `qr_scanner_mode` | `webcam`, `usb`, `disabled` | `webcam` | How the teller UI should read QR cards (informational) |
+| `withdrawal_verification` | `mobile`, `terminal`, `both` | `mobile` | Approval in the customer's app, PIN at the teller terminal, or either |
 
 ## User / role relationships
 
 - Staff and customers are **different tables and models**. A customer is not a `users`
   row and has no `role`.
 - Each staff member has exactly one `role`.
-- A teller owns shifts (`daily_reports.teller_id`) and transactions
-  (`transactions.user_id`).
+- A teller owns shifts (`daily_reports.teller_id`), transactions
+  (`transactions.user_id`) and withdrawal requests (`withdrawal_authorizations.teller_id`).
+- A customer approves or rejects only requests with their `customer_id`.
 - A supervisor appears as reviewer (`daily_reports.supervisor_id`), approver
   (`cash_transfers.approved_by`) and correction authorizer
   (`transactions.authorized_by`).

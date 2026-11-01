@@ -60,4 +60,9 @@ class Customer extends Authenticatable
     {
         return $this->hasMany(Transaction::class);
     }
+
+    public function withdrawalAuthorizations()
+    {
+        return $this->hasMany(WithdrawalAuthorization::class);
+    }
 }

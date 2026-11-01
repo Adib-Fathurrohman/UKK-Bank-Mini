@@ -42,16 +42,31 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Withdrawal PIN
+    | Customer PIN
     |--------------------------------------------------------------------------
     |
-    | After this many wrong PINs in a row, withdrawals from the account are
-    | locked for the given number of minutes.
+    | After this many wrong PINs in a row (at login, withdrawal approval, a
+    | terminal withdrawal or PIN change) the PIN is locked everywhere for the
+    | given number of minutes.
     |
     */
 
     'pin_max_attempts' => (int) env('BANK_PIN_MAX_ATTEMPTS', 3),
 
     'pin_lock_minutes' => (int) env('BANK_PIN_LOCK_MINUTES', 15),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Withdrawal Authorization (customer approves in the mobile app)
+    |--------------------------------------------------------------------------
+    |
+    | How long the customer has to approve a teller's withdrawal request, and
+    | how long the teller then has to complete it, in seconds.
+    |
+    */
+
+    'withdrawal_authorization_pending_seconds' => (int) env('BANK_WITHDRAWAL_AUTH_PENDING_SECONDS', 120),
+
+    'withdrawal_authorization_approved_seconds' => (int) env('BANK_WITHDRAWAL_AUTH_APPROVED_SECONDS', 120),
 
 ];

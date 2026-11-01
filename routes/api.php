@@ -6,6 +6,7 @@ use App\Http\Controllers\API\Audit\JournalController;
 use App\Http\Controllers\API\Audit\TransactionController as AuditTransactionController;
 use App\Http\Controllers\API\Customer\AccountController as CustomerAccountController;
 use App\Http\Controllers\API\Customer\AuthController as CustomerAuthController;
+use App\Http\Controllers\API\Customer\WithdrawalAuthorizationController as CustomerWithdrawalAuthorizationController;
 use App\Http\Controllers\API\LoginController;
 use App\Http\Controllers\API\MajorController;
 use App\Http\Controllers\API\ReportController;
@@ -17,6 +18,7 @@ use App\Http\Controllers\API\Teller\CustomerLookupController;
 use App\Http\Controllers\API\Teller\DailyReportController as TellerDailyReportController;
 use App\Http\Controllers\API\Teller\ShiftController;
 use App\Http\Controllers\API\Teller\TransactionController as TellerTransactionController;
+use App\Http\Controllers\API\Teller\WithdrawalAuthorizationController as TellerWithdrawalAuthorizationController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -100,6 +102,16 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
         Route::get('daily-reports', [TellerDailyReportController::class, 'index']);
         Route::get('daily-reports/{dailyReport}', [TellerDailyReportController::class, 'show']);
         Route::get('daily-reports/{dailyReport}/export', [TellerDailyReportController::class, 'export']);
+
+        // Withdrawals the customer approves with their PIN in the mobile app.
+        Route::post('withdrawal-authorizations', [TellerWithdrawalAuthorizationController::class, 'store'])
+            ->middleware('throttle:withdrawal-authorization-create');
+        Route::middleware('throttle:withdrawal-authorization-poll')->group(function () {
+            Route::get('withdrawal-authorizations', [TellerWithdrawalAuthorizationController::class, 'index']);
+            Route::get('withdrawal-authorizations/{withdrawalAuthorization}', [TellerWithdrawalAuthorizationController::class, 'show']);
+            Route::post('withdrawal-authorizations/{withdrawalAuthorization}/cancel', [TellerWithdrawalAuthorizationController::class, 'cancel']);
+            Route::post('withdrawal-authorizations/{withdrawalAuthorization}/complete', [TellerWithdrawalAuthorizationController::class, 'complete']);
+        });
     });
 
     // Supervisor only
@@ -133,4 +145,14 @@ Route::middleware(['auth:sanctum', 'customer'])->prefix('customer')->group(funct
     Route::get('transactions', [CustomerAccountController::class, 'transactions']);
     Route::get('statement/export', [CustomerAccountController::class, 'statement']);
     Route::get('transactions/{transaction}', [CustomerAccountController::class, 'transaction'])->whereNumber('transaction');
+
+    // Approve (with PIN) or reject withdrawals a teller started for this account.
+    Route::middleware('throttle:withdrawal-authorization-poll')->group(function () {
+        Route::get('withdrawal-authorizations', [CustomerWithdrawalAuthorizationController::class, 'index']);
+        Route::get('withdrawal-authorizations/{withdrawalAuthorization}', [CustomerWithdrawalAuthorizationController::class, 'show']);
+    });
+    Route::middleware('throttle:withdrawal-authorization-decide')->group(function () {
+        Route::post('withdrawal-authorizations/{withdrawalAuthorization}/approve', [CustomerWithdrawalAuthorizationController::class, 'approve']);
+        Route::post('withdrawal-authorizations/{withdrawalAuthorization}/reject', [CustomerWithdrawalAuthorizationController::class, 'reject']);
+    });
 });

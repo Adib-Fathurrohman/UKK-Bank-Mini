@@ -39,6 +39,12 @@ class TransactionResource extends JsonResource
                 'id' => $this->authorizer->id,
                 'full_name' => $this->authorizer->full_name,
             ] : null),
+            // Withdrawals approved by the customer in the mobile app.
+            'withdrawal_authorization' => $this->whenLoaded('withdrawalAuthorization', fn () => $this->withdrawalAuthorization ? [
+                'id' => $this->withdrawalAuthorization->public_id,
+                'method' => 'mobile',
+                'approved_at' => $this->withdrawalAuthorization->approved_at,
+            ] : null),
             'customer' => $this->whenLoaded('customer', fn () => [
                 'id' => $this->customer->id,
                 'account_number' => $this->customer->account_number,

@@ -17,6 +17,8 @@ class SettingsService
 {
     public const QR_SCANNER_MODES = ['webcam', 'usb', 'disabled'];
 
+    public const WITHDRAWAL_VERIFICATION_MODES = ['mobile', 'terminal', 'both'];
+
     /**
      * @return array<string, array{type: string, rules: array<int, string>, default: mixed}>
      */
@@ -35,6 +37,13 @@ class SettingsService
                 'type' => 'string',
                 'rules' => ['string', 'in:'.implode(',', self::QR_SCANNER_MODES)],
                 'default' => 'webcam',
+            ],
+            // How the customer authorizes a withdrawal: approving it with their PIN
+            // in the mobile app, typing the PIN on the teller terminal, or either.
+            'withdrawal_verification' => [
+                'type' => 'string',
+                'rules' => ['string', 'in:'.implode(',', self::WITHDRAWAL_VERIFICATION_MODES)],
+                'default' => 'mobile',
             ],
         ];
     }
@@ -86,6 +95,16 @@ class SettingsService
     public function minBalance(): int
     {
         return $this->get('min_balance');
+    }
+
+    public function allowsMobileWithdrawalVerification(): bool
+    {
+        return in_array($this->get('withdrawal_verification'), ['mobile', 'both'], true);
+    }
+
+    public function allowsTerminalWithdrawalVerification(): bool
+    {
+        return in_array($this->get('withdrawal_verification'), ['terminal', 'both'], true);
     }
 
     private function cast(string $value, string $type): mixed

@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Enums\CashCountStage;
 use App\Enums\ReportStatus;
 use App\Enums\TransactionTypes;
+use App\Enums\WithdrawalAuthorizationStatus;
 use App\Exceptions\CashMismatchException;
 use App\Exceptions\CorrectionNotAllowedException;
 use App\Exceptions\InvalidStatusTransitionException;
@@ -14,6 +15,7 @@ use App\Models\CashTransfer;
 use App\Models\DailyReport;
 use App\Models\Transaction;
 use App\Models\User;
+use App\Models\WithdrawalAuthorization;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -154,6 +156,16 @@ class DailyReportService
             // A shift closed again after a rejection replaces its earlier count.
             CashCount::where('daily_report_id', $shift->id)->where('stage', CashCountStage::CLOSING)->delete();
             $this->saveCounts($shift, CashCountStage::CLOSING, $counts);
+
+            // Withdrawal requests still waiting in this shift can no longer be completed.
+            WithdrawalAuthorization::where('daily_report_id', $shift->id)
+                ->whereIn('status', WithdrawalAuthorizationStatus::open())
+                ->update([
+                    'status' => WithdrawalAuthorizationStatus::CANCELLED,
+                    'cancelled_at' => now(),
+                    'cancel_reason' => 'shift_closed',
+                    'updated_at' => now(),
+                ]);
 
             return $shift;
         });

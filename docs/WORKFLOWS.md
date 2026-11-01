@@ -2,7 +2,7 @@
 
 What the backend actually does for each workflow. Source: controllers in
 `app/Http/Controllers/API`, services in `app/Services` (`TransactionService`,
-`DailyReportService`, `PinService`, `CustomerService`, `SettingsService`,
+`DailyReportService`, `PinService`, `WithdrawalAuthorizationService`, `CustomerService`, `SettingsService`,
 `StaffImportService`, `ReportService`, `PdfReportService`), form requests, and the
 feature tests in `tests/Feature`.
 
@@ -22,10 +22,10 @@ examples are in [API.md](API.md).
 | Preconditions | Account exists; staff `is_active`; customer not closed |
 | User action | Submits username+password or NIS/account number+PIN |
 | Backend operation | `POST /login` → `LoginController` picks staff or customer login → credential check → `createToken()` |
-| Validation | Field rules ([AUTH.md](AUTH.md)); bcrypt check; staff active; customer not inactive/soft-deleted; 5 attempts/min per identifier+IP |
-| Database effect | Inserts a row in `personal_access_tokens` |
+| Validation | Field rules ([AUTH.md](AUTH.md)); staff: bcrypt check, active; customer: PIN through `PinService` (shared lock), not inactive/soft-deleted; 5 attempts/min per identifier+IP |
+| Database effect | Inserts a row in `personal_access_tokens`. Customer: a wrong PIN increments `pin_failed_attempts` (3rd → `pin_locked_until` = now + 15 min); a correct one resets it |
 | API response | `200 {data:{actor, token, token_type, user|customer}}` |
-| Failure cases | `422` wrong credentials / blocked / missing fields; `429` rate limit |
+| Failure cases | `422` wrong credentials / blocked / missing fields (remaining PIN attempts are not revealed); `422 "Terlalu banyak percobaan PIN salah. Coba lagi pukul HH:MM."` while locked; `429` rate limit |
 
 **1.2 Logout:** `POST /staff/logout` or `/customer/logout` deletes the current token
 row. `200 {"message":"Berhasil keluar."}`. Failure: `401` if the token is already
@@ -146,19 +146,46 @@ closed_today}`.
 
 ## 6. Withdrawal (tarik tunai)
 
+How the customer authorizes a withdrawal depends on the `withdrawal_verification`
+setting: `mobile` (default) uses **6A**, `terminal` uses **6B**, `both` allows either.
+Details and the security design: [PIN_VERIFICATION.md](PIN_VERIFICATION.md).
+
+**6A. Approved by the customer in the mobile app (default)**
+
+| | |
+| --- | --- |
+| Actor | Teller (creates and completes), customer (approves in the app with their PIN) |
+| Preconditions | As deposit; mode `mobile`/`both`; account `active`; PIN not locked; balance − amount ≥ minimum balance; no open request of this teller and none for this customer |
+| User action | Teller enters the amount and sends the request → customer opens the app, checks amount, teller and balance after, enters the PIN (or rejects) → teller sees "approved" and completes |
+| Backend operation | 1. `POST /teller/withdrawal-authorizations`: DB transaction locking teller, shift, customer; pre-checks; insert `pending` row (`expires_at` = now + 120 s). 2. `POST /customer/withdrawal-authorizations/{id}/approve`: `PinService::verify` (own DB transaction), then compare-and-set `pending → approved` (`approval_expires_at` = now + 120 s). 3. `POST /teller/withdrawal-authorizations/{id}/complete`: one DB transaction locking teller, shift, the request (must be `approved`, unexpired, same shift), customer; balance −= amount; insert transaction; `approved → consumed` with `transaction_id`; journal |
+| Validation | `account_number`, `amount` as deposit; `pin` exactly 6 digits on approve |
+| Database effect | `withdrawal_authorizations` row through its states; on completion the same effects as 6B plus `consumed_at` and `transaction_id`. PIN counter as in 6B (wrong PIN on approve leaves the request `pending`) |
+| API response | Create `201` (pending); approve `200` (approved); complete `201` Transaction with `withdrawal_authorization`, `200` with the same transaction when repeated |
+| Failure cases | `422` open request exists (teller or customer); `422` mode disabled; `422` wrong PIN / locked; `422` status not usable (`status` in body: rejected, cancelled, expired, consumed, still pending); `422` approval expired / other shift; all deposit and minimum-balance failures; `404` another teller's or customer's request; `403` staff on approve, customer on create; `500` on complete fully rolled back (request stays `approved`) |
+
+Other transitions: customer rejects (`pending → rejected`); teller cancels
+(`pending|approved → cancelled`, reason `teller`); shift close cancels open requests
+(reason `shift_closed`); 120 s without action → `expired` (applied on read and by the
+scheduled `bank:expire-withdrawal-authorizations`, every minute).
+
+**6B. PIN typed at the teller terminal (mode `terminal` or `both`)**
+
 | | |
 | --- | --- |
 | Actor | Teller, with the customer typing the PIN |
-| Preconditions | As deposit; PIN not locked; balance − amount ≥ minimum balance |
+| Preconditions | As deposit; mode `terminal`/`both`; PIN not locked; balance − amount ≥ minimum balance |
 | User action | Enters amount; customer types the 6-digit PIN on the confirmation screen |
-| Backend operation | `POST /teller/withdrawals` → idempotency replay check → **PIN verification first** (own DB transaction: lock customer, check lock, compare hash, update counter) → then the same transaction as a deposit with balance −= amount and the minimum-balance check |
+| Backend operation | `POST /teller/withdrawals` → mode check → idempotency replay check → **PIN verification first** (own DB transaction: lock customer, check lock, compare hash, update counter) → then the same transaction as a deposit with balance −= amount and the minimum-balance check |
 | Validation | Deposit rules + `pin` exactly 6 digits |
 | Database effect | On success: balance decreased; `transactions` (type `withdrawal`); journal Debit 201 / Credit 101. A correct PIN resets the PIN counter (even if the withdrawal then fails for another reason). On a wrong PIN: `pin_failed_attempts` +1 (saved even though the request fails); on the 3rd: counter 0 and `pin_locked_until` = now + 15 min |
 | API response | `201` Transaction; `200` replay (PIN not re-checked) |
-| Failure cases | `422 "PIN salah. Sisa percobaan: N."` (+`remaining_attempts`); `422 "PIN diblokir sementara ... pukul HH:MM."` (+`pin_locked_until`); `422 "Saldo tidak mencukupi. Saldo minimum RpX harus tetap tersisa; penarikan maksimal RpY."`; all deposit failures |
+| Failure cases | `422 "Penarikan harus disetujui nasabah melalui aplikasi..."` in `mobile` mode; `422 "PIN salah. Sisa percobaan: N."` (+`remaining_attempts`); `422 "PIN diblokir sementara ... pukul HH:MM."` (+`pin_locked_until`); `422 "Saldo tidak mencukupi. Saldo minimum RpX harus tetap tersisa; penarikan maksimal RpY."`; all deposit failures |
 
-Order matters: the PIN is checked before the shift, status and balance, so a wrong
-PIN counts even when the withdrawal would fail for another reason.
+Order matters in 6B: the PIN is checked before the shift, status and balance, so a
+wrong PIN counts even when the withdrawal would fail for another reason. 6A checks
+those before the customer is asked.
+
+The PIN lock is shared by login, 6A approval, 6B and PIN change.
 
 ---
 
@@ -189,7 +216,7 @@ amount; the teller then records the correct amount as a new transaction.
 | User action | Counts the drawer per denomination |
 | Backend operation | `POST /teller/shift/close` → lock teller and shift → compute totals from the shift's transactions (net of corrections) → system balance = opening + deposits − withdrawals → compare with the counted total |
 | Validation | Denomination rules; physical total must equal the system balance |
-| Database effect | On match: `daily_reports` snapshot (counts, totals, `system_balance`, `physical_balance`), status `submitted`, `submitted_at`, review fields cleared; previous closing `cash_counts` replaced. On mismatch: nothing |
+| Database effect | On match: `daily_reports` snapshot (counts, totals, `system_balance`, `physical_balance`), status `submitted`, `submitted_at`, review fields cleared; previous closing `cash_counts` replaced; open withdrawal requests of the shift → `cancelled` (`shift_closed`). On mismatch: nothing |
 | API response | `200` DailyReport (`difference` 0, `closing_counts`) |
 | Failure cases | `422` cash mismatch with `system_balance`, `physical_balance`, `difference`; `422 "Belum ada shift yang dibuka..."` |
 
@@ -256,7 +283,7 @@ Read-only. Also available to admins.
 | Unblock | `POST /admin/staff/{id}/unblock` | `is_active` true | `403` admin |
 | Delete | `DELETE /admin/staff/{id}` | Row and tokens deleted if nothing references it | `409` when transactions, reports, approvals or settings changes reference it; `403` admin |
 | Import | `POST /admin/staff/import` (multipart `file`) | All rows inserted in one DB transaction; missing passwords generated (returned once) | `422` keyed `rows.{i}.{field}` (row i+2 in the sheet), nothing inserted |
-| Settings | `GET /settings`, `PATCH /admin/settings` | `settings` rows (`key`, `value`, `updated_by`) | `422` (min_balance 0–1,000,000; scanner mode `webcam`/`usb`/`disabled`) |
+| Settings | `GET /settings`, `PATCH /admin/settings` | `settings` rows (`key`, `value`, `updated_by`) | `422` (min_balance 0–1,000,000; scanner mode `webcam`/`usb`/`disabled`; withdrawal verification `mobile`/`terminal`/`both`) |
 | Reports | `GET /audit/journals/export`, `/audit/transactions/export`, `/reports/annual?school_year=` | None (PDF) | `422` invalid filters/year |
 
 Admin accounts themselves (including password changes) cannot be managed through the
@@ -268,17 +295,21 @@ API. Majors cannot be managed through the API.
 
 | Workflow | Endpoint | Behavior |
 | --- | --- | --- |
-| Login | `POST /login` `{identifier, pin}` | Token; suspended accounts may log in |
+| Login | `POST /login` `{identifier, pin}` | Token; suspended accounts may log in. Wrong PINs count toward the shared PIN lock |
 | Overview | `GET /customer/balance` | `account_number`, `full_name`, `account_status`, `balance`, `min_balance`, `as_of` |
 | Profile | `GET /customer/me` | Customer with major |
 | History | `GET /customer/transactions?from=&to=&type=&page=` | Lines with `direction` (`in`/`out`), `description` (Indonesian label), `amount`, `balance_after`, `created_at`; newest first |
 | Detail | `GET /customer/transactions/{id}` | One own line, `404` otherwise |
 | Digital card | `GET /customer/card` | `qr_payload` to render as a QR code for the teller |
 | Statement PDF | `GET /customer/statement/export?from=&to=` | PDF download |
-| Change PIN | `POST /customer/pin` `{current_pin, new_pin, new_pin_confirmation}` | Verifies current PIN with the withdrawal lock counter; updates hash. `422` with `remaining_attempts` on a wrong current PIN |
+| Change PIN | `POST /customer/pin` `{current_pin, new_pin, new_pin_confirmation}` | Verifies current PIN with the shared lock counter; updates hash. `422` with `remaining_attempts` on a wrong current PIN |
+| Withdrawal requests | `GET /customer/withdrawal-authorizations` (poll while the app is open) | Own open requests with amount, teller name, balance and balance after, deadlines |
+| Approve withdrawal | `POST /customer/withdrawal-authorizations/{id}/approve` `{pin}` | See 6A. `422` with `remaining_attempts` on a wrong PIN |
+| Reject withdrawal | `POST /customer/withdrawal-authorizations/{id}/reject` | `pending → rejected` |
 | Logout | `POST /customer/logout` | Revokes token |
 
-Customers cannot initiate any money movement.
+Customers cannot initiate any money movement; they can only approve or reject a
+withdrawal a teller started for their account.
 
 ---
 
@@ -292,5 +323,6 @@ Customers cannot initiate any money movement.
 - Cash movement from the vault to tellers.
 - Password/PIN reset by the user; staff self-service password change; managing admin accounts.
 - Major management; multi-role users; attendance integration.
-- Notifications (push, email, WhatsApp).
+- Notifications (push, email, WhatsApp); withdrawal requests are delivered by polling.
+- Approval in the app for deposits or corrections (withdrawals only).
 - JSON version of the annual report.

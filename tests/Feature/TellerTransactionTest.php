@@ -7,6 +7,7 @@ use App\Models\Transaction;
 use App\Services\JournalService;
 
 beforeEach(function () {
+    allowTerminalWithdrawals();
     $this->customer = Customer::factory()->create(['account_number' => '1000000001', 'balance' => 50000]);
 });
 

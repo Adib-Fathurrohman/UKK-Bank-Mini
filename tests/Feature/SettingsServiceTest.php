@@ -10,6 +10,7 @@ test('settings fall back to their defaults before anything is saved', function (
     expect($settings->all())->toBe([
         'min_balance' => 10000,
         'qr_scanner_mode' => 'webcam',
+        'withdrawal_verification' => 'mobile',
     ]);
 });
 
@@ -17,10 +18,12 @@ test('saved settings are returned with their types and record who changed them',
     $admin = User::factory()->admin()->create();
     $settings = app(SettingsService::class);
 
-    $result = $settings->update(['min_balance' => '15000', 'qr_scanner_mode' => 'usb'], $admin);
+    $result = $settings->update(['min_balance' => '15000', 'qr_scanner_mode' => 'usb', 'withdrawal_verification' => 'both'], $admin);
 
-    expect($result)->toBe(['min_balance' => 15000, 'qr_scanner_mode' => 'usb'])
+    expect($result)->toBe(['min_balance' => 15000, 'qr_scanner_mode' => 'usb', 'withdrawal_verification' => 'both'])
         ->and($settings->minBalance())->toBe(15000)
+        ->and($settings->allowsMobileWithdrawalVerification())->toBeTrue()
+        ->and($settings->allowsTerminalWithdrawalVerification())->toBeTrue()
         ->and(Setting::find('min_balance')->updated_by)->toBe($admin->id);
 });
 

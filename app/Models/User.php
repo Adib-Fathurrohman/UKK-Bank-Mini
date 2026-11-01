@@ -47,6 +47,14 @@ class User extends Authenticatable
         return $this->hasMany(Transaction::class);
     }
 
+    /**
+     * Withdrawal requests this teller sent to customers for approval.
+     */
+    public function withdrawalAuthorizations()
+    {
+        return $this->hasMany(WithdrawalAuthorization::class, 'teller_id');
+    }
+
     public function dailyReports()
     {
         return $this->hasMany(DailyReport::class, 'teller_id');

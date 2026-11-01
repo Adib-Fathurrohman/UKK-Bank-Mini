@@ -9,6 +9,7 @@ use Illuminate\Support\Carbon;
 use Laravel\Sanctum\Sanctum;
 
 beforeEach(function () {
+    allowTerminalWithdrawals();
     $this->travelTo(Carbon::parse('2026-10-23 09:00:00'));
     $this->customer = Customer::factory()->create([
         'account_number' => 'RPL-2026-001',

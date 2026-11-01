@@ -56,6 +56,8 @@ login has both `auth:sanctum` and an actor middleware.
 | Teller may only print/correct their own transactions | `GET /teller/transactions/{id}/receipt`, `POST /teller/transactions/{id}/correct` | `404` |
 | Lists are scoped to the caller | `GET /teller/transactions`, `GET /teller/daily-reports`, `GET /teller/shift`, all `/customer/*` | Only own data; request parameters cannot select another account |
 | Customer transaction detail | `GET /customer/transactions/{id}` | `404` for other customers' transactions |
+| Withdrawal requests (teller side) | `GET/POST /teller/withdrawal-authorizations/{id}[/cancel\|/complete]` | `404` for requests created by another teller |
+| Withdrawal requests (customer side) | `GET/POST /customer/withdrawal-authorizations/{id}[/approve\|/reject]` | `404` for requests for another customer; nothing about other customers is revealed |
 | Administrator accounts are protected | `PATCH/PUT/DELETE /admin/staff/{id}`, `POST .../block`, `.../unblock` | `403 "Akun administrator tidak dapat diubah melalui API."` |
 | Correction authorization | `POST /teller/transactions/{id}/correct` | Requires `supervisor_username` + `supervisor_password` of an **active supervisor** in the body (`422` otherwise). The supervisor is recorded in `authorized_by` |
 
@@ -68,7 +70,7 @@ Only capabilities that exist in the backend. "User" = customer (nasabah).
 | --- | :-: | :-: | :-: | :-: |
 | Log in / log out / read own profile | ✓ | ✓ | ✓ | ✓ |
 | Read majors and settings | ✓ | ✓ | ✓ | — |
-| Change settings (minimum balance, scanner mode) | ✓ | — | — | — |
+| Change settings (minimum balance, scanner mode, withdrawal verification mode) | ✓ | — | — | — |
 | List / view staff | ✓ | ✓ | — | — |
 | Create, edit, block, unblock, delete, import tellers/supervisors | ✓ | — | — | — |
 | List / view customer accounts (incl. closed) | ✓ | ✓ | — | — |
@@ -78,6 +80,8 @@ Only capabilities that exist in the backend. "User" = customer (nasabah).
 | Look up one customer by QR / account number / NIS | — | — | ✓ | — |
 | Open / view / close own shift | — | — | ✓ | — |
 | Deposit, withdrawal | — | — | ✓ | — |
+| Start, poll, cancel and complete a withdrawal request (mobile approval) | — | — | ✓ | — |
+| Approve (with own PIN) or reject a withdrawal request for own account | — | — | — | ✓ |
 | Correction of own transaction | — | — (authorizes with credentials) | ✓ | — |
 | Own transactions of a day, receipt PDF | — | — | ✓ | — |
 | Own shift history, daily report PDF | — | — | ✓ | — |
@@ -97,8 +101,12 @@ Notes:
 - **Supervisor and corrections.** A supervisor never calls the correction endpoint.
   They authorize a teller's correction by typing their own username and password on
   the teller's screen.
-- **Customer PIN at the counter.** The customer authorizes a withdrawal by typing
-  their PIN on the teller's screen; the teller's request carries it.
+- **Customer PIN.** By default (`withdrawal_verification = mobile`) the customer
+  authorizes a withdrawal in the mobile app: the teller creates a request, the customer
+  approves it with their PIN, the teller completes it. Staff can never call the approve
+  endpoint (`customer` middleware) and never receive the PIN. The customer can never
+  create a request or a transaction. In `terminal`/`both` mode the customer may instead
+  type the PIN on the teller's screen (`POST /teller/withdrawals`).
 - **Nobody** can edit or delete transactions, journal lines, approved reports or
   cash transfers (no endpoints, plus model guards).
 - **Change own staff password** is not implemented for anyone; an admin can set a
@@ -125,7 +133,8 @@ Notes:
 
 ### Teller
 - **Can:** open and close their own shift, look up a customer (QR, account number,
-  NIS), deposit, withdraw (with the customer's PIN), correct their own transaction
+  NIS), deposit, withdraw (after the customer approves in the app, or with the PIN at
+  the terminal if enabled), correct their own transaction
   (with a supervisor's credentials), list their own transactions per day, print
   receipts, see their own shift history and print their own daily reports, read
   majors and settings.
@@ -135,13 +144,13 @@ Notes:
 ### Customer (User)
 - **Can:** see own profile, balance (with the minimum balance), statement with
   filters, single transaction, digital card, download own statement PDF, change
-  PIN, log out.
-- **Cannot:** move money, see other customers, see staff data, journals or
+  PIN, approve or reject withdrawal requests a teller made for their account, log out.
+- **Cannot:** start a withdrawal or move money, see other customers, see staff data, journals or
   internal reports, use any staff endpoint.
 
 ## 7. Endpoint restrictions
 
-All 58 API routes (`php artisan route:list --path=api`). Prefix `/api`.
+All 67 API routes (`php artisan route:list --path=api`). Prefix `/api`.
 
 | Method | Path | Middleware (beyond `api`) |
 | --- | --- | --- |
@@ -164,7 +173,10 @@ All 58 API routes (`php artisan route:list --path=api`). Prefix `/api`.
 | GET | `/teller/customers/lookup` | `staff:teller` |
 | GET | `/teller/shift` · POST `/teller/shift/open`, `/teller/shift/close` | `staff:teller` |
 | GET | `/teller/daily-reports`, `/teller/daily-reports/{dailyReport}`, `/teller/daily-reports/{dailyReport}/export` | `staff:teller` + ownership |
-| POST | `/teller/deposits`, `/teller/withdrawals` | `staff:teller` |
+| POST | `/teller/deposits`, `/teller/withdrawals` | `staff:teller` (`/withdrawals` also needs the `terminal`/`both` setting) |
+| POST | `/teller/withdrawal-authorizations` | `staff:teller`, `throttle:withdrawal-authorization-create` |
+| GET | `/teller/withdrawal-authorizations`, `/teller/withdrawal-authorizations/{withdrawalAuthorization}` | `staff:teller`, `throttle:withdrawal-authorization-poll` + ownership |
+| POST | `/teller/withdrawal-authorizations/{withdrawalAuthorization}/cancel`, `/complete` | `staff:teller`, `throttle:withdrawal-authorization-poll` + ownership |
 | GET | `/teller/transactions`, `/teller/transactions/{transaction}/receipt` | `staff:teller` + ownership |
 | POST | `/teller/transactions/{transaction}/correct` | `staff:teller`, `throttle:10,1` + ownership + supervisor credentials |
 | GET | `/supervisor/daily-reports`, `/supervisor/daily-reports/{dailyReport}`, `/supervisor/daily-reports/{dailyReport}/export` | `staff:supervisor` |
@@ -172,6 +184,8 @@ All 58 API routes (`php artisan route:list --path=api`). Prefix `/api`.
 | GET | `/supervisor/cash-transfers`, `/supervisor/cash-transfers/{cashTransfer}` | `staff:supervisor` |
 | GET | `/customer/me`, `/customer/balance`, `/customer/card`, `/customer/transactions`, `/customer/transactions/{transaction}`, `/customer/statement/export` | `auth:sanctum`, `customer` |
 | POST | `/customer/logout`, `/customer/pin` | `auth:sanctum`, `customer` |
+| GET | `/customer/withdrawal-authorizations`, `/customer/withdrawal-authorizations/{withdrawalAuthorization}` | `auth:sanctum`, `customer`, `throttle:withdrawal-authorization-poll` + ownership |
+| POST | `/customer/withdrawal-authorizations/{withdrawalAuthorization}/approve`, `/reject` | `auth:sanctum`, `customer`, `throttle:withdrawal-authorization-decide` + ownership |
 
 Every `staff:*` route also has `auth:sanctum` and `staff`.
 

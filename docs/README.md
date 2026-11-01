@@ -6,7 +6,8 @@ mobile app (React Native + Expo).
 
 **The backend code is the source of truth.** All documents below were written from
 the implementation (routes, middleware, controllers, form requests, services, API
-resources, migrations, tests) at commit `5ddbd69`. If a document disagrees with the
+resources, migrations, tests) at commit `5ddbd69` and updated for the mobile
+withdrawal approval after `c405986`. If a document disagrees with the
 code, the code wins; report the difference so the document can be fixed.
 
 ## Recommended reading order
@@ -26,7 +27,8 @@ Also available:
 | Document | Purpose |
 | --- | --- |
 | [BACKEND_CHECKPOINT.md](BACKEND_CHECKPOINT.md) | Handoff status: technology versions, endpoint counts, limitations, environment requirements, invariants the frontend must respect |
-| [API_SUMMARY.json](API_SUMMARY.json) | Machine-readable index of all 58 endpoints (method, path, auth, roles, request fields, validation, response, errors), generated from the route list. For coding agents; does not replace API.md |
+| [PIN_VERIFICATION.md](PIN_VERIFICATION.md) | How customers authorize withdrawals: approval with PIN in the mobile app (default) or PIN at the teller terminal; the shared PIN lock; concurrency and security design |
+| [API_SUMMARY.json](API_SUMMARY.json) | Machine-readable index of all 67 endpoints (method, path, auth, roles, request fields, validation, response, errors), generated from the route list. For coding agents; does not replace API.md |
 
 ## Which document is authoritative for what
 
@@ -39,12 +41,13 @@ Also available:
 | Field meanings and enums | [DATA_MODEL.md](DATA_MODEL.md) |
 | What to build in the UI | [UI_REQUIREMENTS.md](UI_REQUIREMENTS.md) |
 | Gaps, quirks, limitations | [FRONTEND_HANDOFF.md §18–20](FRONTEND_HANDOFF.md#18-known-backend-limitations) |
+| Withdrawal PIN / mobile approval design | [PIN_VERIFICATION.md](PIN_VERIFICATION.md) |
 
 ## How these documents were produced
 
 All documents are derived from the backend implementation:
 
-- routes and middleware from `php artisan route:list` (58 API routes);
+- routes and middleware from `php artisan route:list` (67 API routes);
 - validation from `app/Http/Requests` and inline `validate()` calls;
 - behavior from `app/Services` and the controllers;
 - response shapes from `app/Http/Resources`;

@@ -113,12 +113,18 @@ Common requirements for every page:
 
 ### Settings
 - **Endpoints:** `GET /settings`, `PATCH /admin/settings` (`min_balance` 0–1,000,000,
-  `qr_scanner_mode` webcam/usb/disabled).
+  `qr_scanner_mode` webcam/usb/disabled, `withdrawal_verification`
+  mobile/terminal/both).
+- **Note:** explain the withdrawal modes: `mobile` = the customer approves in the app
+  (default, the teller never handles the PIN); `terminal` = the customer types the PIN
+  at the counter; `both` = either.
 
 ### Audit log
 - **Endpoints:** `GET /audit/transactions` (filters `from`, `to` with optional time,
   `teller`, `customer`, `type`), `GET /audit/transactions/{id}` (journal lines,
-  correction links), PDF `GET /audit/transactions/export`.
+  correction links, and `withdrawal_authorization` for withdrawals approved in the
+  app: show "Disetujui nasabah via aplikasi" with `approved_at`), PDF
+  `GET /audit/transactions/export`.
 - **States:** filtered empty result.
 
 ### Journal and trial balance
@@ -189,18 +195,22 @@ Common requirements for every page:
 
 ### Counter (lookup + transaction)
 - **Purpose:** serve a customer.
-- **Data / endpoints:** `GET /settings` (`qr_scanner_mode`, `min_balance`),
-  `GET /teller/customers/lookup?identifier=`, `POST /teller/deposits`,
-  `POST /teller/withdrawals`.
+- **Data / endpoints:** `GET /settings` (`qr_scanner_mode`, `min_balance`,
+  `withdrawal_verification`), `GET /teller/customers/lookup?identifier=`,
+  `POST /teller/deposits`, `POST /teller/withdrawal-authorizations` (+ poll, cancel,
+  complete; see below), `POST /teller/withdrawals` (terminal mode only).
 - **Functions:**
   - QR scan via camera (`webcam`), keyboard-wedge scanner input (`usb`), or manual
     entry (`disabled`), always with a manual fallback field;
   - customer panel: name, account number, NIS, class/major, status, balance, PIN lock;
   - amount input (integer, **multiples of 100**, ≤ 100,000,000);
-  - withdrawal pre-check: `balance − amount ≥ min_balance` before showing the PIN pad;
+  - withdrawal pre-check: `balance − amount ≥ min_balance` before sending the request
+    (or showing the PIN pad in terminal mode);
   - confirmation dialog summarizing type, account, name, amount (and amount in words);
-  - customer PIN pad for withdrawals (masked, cleared after each attempt; show
-    `remaining_attempts` / lock time);
+  - withdrawal, `mobile` mode: "send to the customer's app" instead of a PIN pad (see
+    *Withdrawal approval*);
+  - withdrawal, `terminal` mode: customer PIN pad (masked, cleared after each attempt;
+    show `remaining_attempts` / lock time); in `both` mode offer both;
   - `Idempotency-Key` per confirmed submission, reused on retry; submit disabled while
     pending;
   - keyboard operation (Enter to confirm) as requested in the interview.
@@ -208,6 +218,21 @@ Common requirements for every page:
   disabled; PIN locked → withdraw disabled; `422` business message; success with new
   balance and receipt option.
 - **Permissions:** teller.
+
+### Withdrawal approval (waiting screen)
+- **Endpoints:** `POST /teller/withdrawal-authorizations`,
+  `GET /teller/withdrawal-authorizations/{id}` (poll every ~2 s),
+  `POST .../{id}/cancel`, `POST .../{id}/complete`,
+  `GET /teller/withdrawal-authorizations?status=open` (resume after reload).
+- **Data:** customer, amount (+ words), status label, countdown from `server_time` to
+  `expires_at` (pending) or `approval_expires_at` (approved).
+- **Functions:** cancel while waiting; "complete withdrawal" once `approved`; then
+  receipt. No PIN field anywhere on this screen.
+- **States:** `pending` (waiting for the customer), `approved` (complete now),
+  `rejected`, `expired`, `cancelled` (show and allow a new request), `consumed`
+  (done); `422` "open request exists" → offer to resume or cancel it; `complete` may be
+  retried (same transaction).
+- **Permissions:** teller (own requests only).
 
 ### Receipt
 - **Endpoint:** `GET /teller/transactions/{id}/receipt` (PDF, own transactions).
@@ -242,7 +267,8 @@ Common requirements for every page:
 ### Login
 - **Endpoint:** `POST /login` with `identifier` (NIS or account number) and `pin`
   (6-digit numeric keypad).
-- **States:** field errors, wrong credentials, `429`; refuse `actor: "staff"`.
+- **States:** field errors, wrong credentials, lock message with unlock time (3 wrong
+  PINs anywhere), `429`; refuse `actor: "staff"`.
 - **Storage:** token in `expo-secure-store`.
 
 ### Home / balance
@@ -267,6 +293,20 @@ Common requirements for every page:
 ### Profile
 - **Endpoint:** `GET /customer/me`.
 
+### Withdrawal approval
+- **Endpoints:** `GET /customer/withdrawal-authorizations` (poll every 3–5 s while the
+  screen is visible; also check on app start/foreground),
+  `GET /customer/withdrawal-authorizations/{id}`, `POST .../{id}/approve` (`pin`),
+  `POST .../{id}/reject`.
+- **Data:** amount (+ words), teller name, current balance and balance after,
+  countdown from `server_time` to `expires_at`.
+- **Functions:** reject; approve → masked 6-digit PIN pad (numeric, secure entry,
+  cleared after each attempt, never stored). Optional device biometrics first.
+- **States:** none waiting (empty); wrong PIN with `remaining_attempts` (request stays
+  pending); locked with unlock time; `422` with `status` expired/cancelled → remove the
+  card and explain; approved → "show the teller, they will complete it".
+- **Permissions:** customer, own requests only. The app never starts a withdrawal.
+
 ### Change PIN
 - **Endpoint:** `POST /customer/pin` (`current_pin`, `new_pin`,
   `new_pin_confirmation`).
@@ -286,9 +326,11 @@ Common requirements for every page:
 
 - Staff "change my password" or profile editing; any admin-account management.
 - Forgot password / forgot PIN.
-- Customer-initiated transfers or payments; deposits/withdrawals from the mobile app.
+- Customer-initiated transfers or payments; starting deposits/withdrawals from the
+  mobile app (the app only approves or rejects a teller's withdrawal request).
 - Restoring closed accounts; major management.
-- Bulk approval; notifications.
+- Bulk approval; push notifications (poll instead); supervisor/admin list of
+  withdrawal requests.
 - JSON annual report or dashboard statistics endpoints (compose from lists).
 - Editing or deleting transactions, reports or transfers.
 - Multiple savings products, loans, fees.

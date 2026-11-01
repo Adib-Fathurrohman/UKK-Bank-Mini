@@ -22,6 +22,7 @@ database; long lists are shortened.
   - [Teller: shift and cash closing](#teller-shift-and-cash-closing)
   - [Teller: transactions](#teller-transactions)
   - [Teller: corrections](#teller-corrections)
+  - [Withdrawal authorizations (mobile approval)](#withdrawal-authorizations-mobile-approval)
   - [Supervisor: daily reports](#supervisor-daily-reports)
   - [Supervisor: vault ledger](#supervisor-vault-ledger)
   - [Audit](#audit)
@@ -58,6 +59,8 @@ database; long lists are shortened.
 | Journal `position` | `debit`, `credit` |
 | Daily report `status` | `open`, `submitted`, `on_hold`, `approved`, `rejected` |
 | Setting `qr_scanner_mode` | `webcam`, `usb`, `disabled` |
+| Setting `withdrawal_verification` | `mobile`, `terminal`, `both` |
+| Withdrawal authorization `status` | `pending`, `approved`, `consumed` (done), `rejected`, `cancelled`, `expired` |
 | Cash denominations | `100000`, `50000`, `20000`, `10000`, `5000`, `2000`, `1000`, `500`, `200`, `100` |
 
 ### Account numbers
@@ -77,6 +80,8 @@ Staff tokens only work on staff endpoints, customer tokens only on `/customer/*`
 - Tokens expire after **8 hours** (`SANCTUM_EXPIRATION`). An expired token returns `401`.
 - Logout revokes only the token used for that request.
 - Login is limited to **5 attempts per minute** per username/identifier and IP (`429`).
+- Customer login checks the PIN with the same counter as withdrawal approval: **3 wrong
+  PINs in a row lock the PIN for 15 minutes** everywhere (login, approval, PIN change).
 - Blocking a staff member or closing a customer account revokes their tokens immediately.
 - Every request re-checks the actor and role against the database before running a query.
 
@@ -112,7 +117,7 @@ Some business errors add extra fields (shown below).
 | `409` | Staff delete refused because of history | `{ "message": "Staf ini memiliki riwayat transaksi, ... Blokir akunnya saja." }` |
 | `422` | Field validation failed | `{ "message": "...", "errors": { "amount": ["The amount field must be at least 1."] } }` |
 | `422` | Business rule refused the request | `{ "message": "Saldo tidak mencukupi. Saldo minimum Rp10.000 harus tetap tersisa; penarikan maksimal Rp990.000." }` |
-| `429` | Too many login/correction attempts | `{ "message": "Too Many Attempts." }` |
+| `429` | Too many login, correction or withdrawal-authorization requests | `{ "message": "Too Many Attempts." }` |
 | `500` | Unexpected server error; any money operation is fully rolled back | `{ "message": "Server Error" }` |
 
 `403` messages tell the client what failed: `Fitur ini khusus untuk staf bank.`
@@ -150,7 +155,7 @@ Matches the matrix in the UKK soal (section III.1).
 | Accounts (open, edit, close, print card) | C, R, U | R (lookup) | R | — |
 | QR scan lookup | Configure (settings) | R (execute) | — | — |
 | Deposit / withdrawal / correction | R (audit log) | C | R (audit log) | — |
-| Withdrawal PIN | — | — | — | Enters PIN at the counter |
+| Withdrawal PIN | — | C (request), U (complete) | — | U (approve/reject own request with PIN in the app) |
 | Shift, cash closing, daily report draft | — | C, R | R | — |
 | Approve / hold / reject daily report | — | — | U | — |
 | Cash to vault (on approval) | — | — | U | — |
@@ -182,6 +187,8 @@ Matches the matrix in the UKK soal (section III.1).
 | `GET` | `/teller/daily-reports`, `/teller/daily-reports/{id}`, `/teller/daily-reports/{id}/export` (PDF) | Teller |
 | `GET` | `/teller/customers/lookup` | Teller |
 | `POST` | `/teller/deposits`, `/teller/withdrawals` | Teller |
+| `GET` | `/teller/withdrawal-authorizations`, `/teller/withdrawal-authorizations/{id}` | Teller |
+| `POST` | `/teller/withdrawal-authorizations`, `/teller/withdrawal-authorizations/{id}/cancel`, `/complete` | Teller |
 | `GET` | `/teller/transactions`, `/teller/transactions/{id}/receipt` (PDF) | Teller |
 | `POST` | `/teller/transactions/{id}/correct` | Teller |
 | `GET` | `/supervisor/daily-reports`, `/supervisor/daily-reports/{id}`, `/supervisor/daily-reports/{id}/export` (PDF) | Supervisor |
@@ -193,6 +200,8 @@ Matches the matrix in the UKK soal (section III.1).
 | `GET` | `/customer/me`, `/customer/balance`, `/customer/card` | Nasabah |
 | `GET` | `/customer/transactions`, `/customer/transactions/{id}`, `/customer/statement/export` (PDF) | Nasabah |
 | `POST` | `/customer/pin` · `/customer/logout` | Nasabah |
+| `GET` | `/customer/withdrawal-authorizations`, `/customer/withdrawal-authorizations/{id}` | Nasabah |
+| `POST` | `/customer/withdrawal-authorizations/{id}/approve`, `/reject` | Nasabah |
 
 ---
 
@@ -232,7 +241,10 @@ portal to open. `/staff/login` and `/customer/login` accept the same bodies.
 
 **422**: wrong credentials (`Username atau password salah.` /
 `NIS/nomor rekening atau PIN salah.`), blocked staff, closed account, or neither
-kind of credentials:
+kind of credentials. A wrong customer PIN counts toward the PIN lock, but login does
+not reveal the remaining attempts; once locked it answers
+`Terlalu banyak percobaan PIN salah. Coba lagi pukul 09:15.` (local time) until the
+lock ends:
 
 ```json
 {
@@ -370,11 +382,12 @@ Global configuration set by the administrator (soal 1a).
 | --- | --- | --- | --- |
 | `min_balance` | integer 0–1,000,000 | `10000` | Balance that must remain after a withdrawal |
 | `qr_scanner_mode` | `webcam`, `usb`, `disabled` | `webcam` | How the teller screen reads customer QR cards (camera, USB scanner that types like a keyboard, or manual entry only) |
+| `withdrawal_verification` | `mobile`, `terminal`, `both` | `mobile` | How the customer authorizes a withdrawal: approval with PIN in the mobile app ([withdrawal authorizations](#withdrawal-authorizations-mobile-approval)), PIN typed at the teller terminal (`POST /teller/withdrawals`), or either |
 
 `GET /settings` (any staff) and `PUT|PATCH /admin/settings` (admin, any subset):
 
 ```json
-{ "data": { "min_balance": 10000, "qr_scanner_mode": "webcam" } }
+{ "data": { "min_balance": 10000, "qr_scanner_mode": "webcam", "withdrawal_verification": "mobile" } }
 ```
 
 ---
@@ -563,7 +576,8 @@ Closed accounts are not found (**404** `Nasabah tidak ditemukan.`).
 }
 ```
 
-`pin_locked_until` is set while withdrawals are locked after wrong PINs.
+`pin_locked_until` is set while the PIN is locked after wrong PINs (no withdrawal
+request can be created for the customer until then).
 
 #### Idempotency
 
@@ -615,8 +629,13 @@ record the transaction, write the journal (Debit 101 Kas / Credit 201 Tabungan).
 
 #### `POST /teller/withdrawals`
 
-Cash withdrawal, **authorized by the customer's PIN** typed on the counter's
-confirmation screen (soal 1d). Journal: Debit 201 Tabungan / Credit 101 Kas.
+Cash withdrawal, **authorized by the customer's PIN typed at the teller terminal**
+(Mode B). Journal: Debit 201 Tabungan / Credit 101 Kas.
+
+Only available when the `withdrawal_verification` setting is `terminal` or `both`.
+With the default `mobile`, use [withdrawal authorizations](#withdrawal-authorizations-mobile-approval)
+instead; this endpoint then answers **422**
+`Penarikan harus disetujui nasabah melalui aplikasi. Buat permintaan persetujuan penarikan untuk nasabah.`
 
 | Field | Rules |
 | --- | --- |
@@ -635,9 +654,10 @@ confirmation screen (soal 1d). Journal: Debit 201 Tabungan / Credit 101 Kas.
 { "message": "PIN salah. Sisa percobaan: 2.", "remaining_attempts": 2, "pin_locked_until": null }
 ```
 
-After **3 wrong PINs in a row** withdrawals are locked for **15 minutes**
+After **3 wrong PINs in a row** the PIN is locked for **15 minutes**
 (`BANK_PIN_MAX_ATTEMPTS`, `BANK_PIN_LOCK_MINUTES`); even the right PIN is refused
-until then. A correct PIN resets the counter; an admin PIN reset lifts the lock.
+until then. The counter is shared with customer login, mobile approval and PIN change.
+A correct PIN resets the counter; an admin PIN reset lifts the lock.
 
 ```json
 {
@@ -708,6 +728,165 @@ Rules:
 `Transaksi ini sudah pernah dikoreksi.`; `Transaksi koreksi tidak dapat dikoreksi lagi.`;
 `Koreksi hanya dapat dilakukan pada shift tempat transaksi asli dicatat, ...`;
 `Saldo nasabah sudah tidak mencukupi untuk membatalkan setoran ini.`
+
+---
+
+### Withdrawal authorizations (mobile approval)
+
+Mode A of [PIN verification](PIN_VERIFICATION.md): the teller starts a withdrawal,
+the customer approves it **in the mobile app with their PIN**, the teller completes
+it. The teller never handles the PIN, and the customer can never start a withdrawal.
+Requires the `withdrawal_verification` setting `mobile` (default) or `both`.
+
+```text
+teller POST  /teller/withdrawal-authorizations          → pending   (120 s to approve)
+customer POST /customer/withdrawal-authorizations/{id}/approve {pin} → approved (120 s to complete)
+teller POST  /teller/withdrawal-authorizations/{id}/complete         → consumed + Transaction
+```
+
+Other outcomes: `rejected` (customer), `cancelled` (teller, or the shift was closed:
+`cancel_reason` `teller` / `shift_closed`), `expired` (time ran out). Only `pending`
+and `approved` are "open". `{id}` is the request's ULID (`data.id`). Another teller's
+or customer's request answers **404**. Every response has `server_time`, so clients
+can run an accurate countdown to `expires_at` / `approval_expires_at`.
+
+Polling, not push: the teller polls `GET .../{id}` (every 2 s is fine) and the app
+polls its list while open. Rate limits: create 10/min per teller; list/show/cancel/
+complete 120/min per actor; approve/reject 5/min per customer (`429`).
+
+**422** when a step is not possible in the current status; `status` is included when
+the message is about a specific request:
+
+```json
+{ "message": "Permintaan penarikan ini berstatus \"selesai\" dan tidak dapat diproses.", "status": "consumed" }
+```
+
+#### `POST /teller/withdrawal-authorizations`
+
+| Field | Rules |
+| --- | --- |
+| `account_number` | required, an existing account that is not closed |
+| `amount` | required, integer 1 – 100,000,000 |
+
+Checks everything the withdrawal will need **before** the customer is asked: open shift
+for today, account `active`, PIN not locked, `balance − amount ≥ min_balance`, no other
+open request of this teller, no open request for this customer. No money moves.
+
+**201**
+
+```json
+{
+  "data": {
+    "id": "01M6AMM4CNBR52V8MKC0JEDPJM", "status": "pending",
+    "status_label": "Menunggu persetujuan nasabah",
+    "amount": 50000, "amount_in_words": "lima puluh ribu rupiah",
+    "customer": { "id": 1, "account_number": "RPL-2026-001", "full_name": "Budi Santoso", "class": "X" },
+    "daily_report_id": 2,
+    "created_at": "2026-11-01T04:07:01.000000Z", "expires_at": "2026-11-01T04:09:01.000000Z",
+    "approved_at": null, "approval_expires_at": null, "rejected_at": null,
+    "cancelled_at": null, "cancel_reason": null, "consumed_at": null, "transaction_id": null,
+    "server_time": "2026-11-01T04:07:01.782795Z"
+  }
+}
+```
+
+**422** in addition to the deposit errors (shift, suspended account), the minimum
+balance error and the PIN lock error of `POST /teller/withdrawals`:
+
+| Message | Cause |
+| --- | --- |
+| `Masih ada permintaan penarikan yang belum selesai. Selesaikan atau batalkan terlebih dahulu.` | This teller already has an open request |
+| `Nasabah ini masih memiliki permintaan penarikan yang belum selesai.` | The customer already has an open request (from any teller) |
+| `Persetujuan penarikan melalui aplikasi nasabah sedang tidak diaktifkan.` | Setting is `terminal` |
+
+#### `GET /teller/withdrawal-authorizations` · `GET /teller/withdrawal-authorizations/{id}`
+
+The list returns the teller's own requests created today, newest first (paginated,
+default `per_page` 15). `?status=open` returns only the open one, to resume the
+waiting screen after a page reload. `GET .../{id}` is the polling endpoint; it returns
+the same object as above with the current status (expiry is applied on read).
+
+#### `POST /teller/withdrawal-authorizations/{id}/cancel`
+
+`pending` or `approved` → `cancelled` (`cancel_reason: "teller"`). **200** with the
+request. **422** if it is already finished.
+
+#### `POST /teller/withdrawal-authorizations/{id}/complete`
+
+Executes the approved withdrawal for the account and amount **stored in the request**
+(nothing is taken from the body). In one database transaction: lock teller and shift,
+lock the request (must be `approved`, not past `approval_expires_at`, same shift), lock
+the customer, check status and minimum balance again, record the withdrawal, mark the
+request `consumed`, write the journal. Any failure rolls everything back; the request
+stays `approved` and can be retried until it expires.
+
+**201** a [Transaction](#transaction) the first time; **200** with the same transaction
+if called again (safe to retry after a timeout, no `Idempotency-Key` needed):
+
+```json
+{
+  "data": {
+    "id": 4, "type": "withdrawal", "type_label": "Tarik tunai",
+    "amount": 50000, "amount_in_words": "lima puluh ribu rupiah",
+    "balance_before": 500000, "balance_after": 450000,
+    "created_at": "2026-11-01T04:07:02.000000Z", "daily_report_id": 2,
+    "corrects_transaction_id": null, "note": null,
+    "withdrawal_authorization": { "id": "01M6AMM4CNBR52V8MKC0JEDPJM", "method": "mobile", "approved_at": "2026-11-01T04:07:02.000000Z" },
+    "customer": { "id": 1, "account_number": "RPL-2026-001", "full_name": "Budi Santoso" }
+  }
+}
+```
+
+**422**: not approved yet (`status: "pending"`), finished, approval expired
+(`Persetujuan nasabah sudah kedaluwarsa. Buat permintaan penarikan baru.`), shift closed
+or a different shift (`Permintaan penarikan ini dibuat pada shift lain.`), or the
+balance no longer allows it.
+
+#### `GET /customer/withdrawal-authorizations` · `GET /customer/withdrawal-authorizations/{id}`
+
+The customer's own **open** requests (not paginated), or one own request in any status.
+`balance_after` previews the balance after the withdrawal (`null` once the request is no
+longer open).
+
+```json
+{
+  "data": [
+    {
+      "id": "01M6AMM4CNBR52V8MKC0JEDPJM", "status": "pending",
+      "status_label": "Menunggu persetujuan nasabah",
+      "amount": 50000, "amount_in_words": "lima puluh ribu rupiah",
+      "account_number": "RPL-2026-001", "balance": 500000, "balance_after": 450000,
+      "teller": { "full_name": "Teller Loket 1" },
+      "created_at": "2026-11-01T04:07:01.000000Z", "expires_at": "2026-11-01T04:09:01.000000Z",
+      "approved_at": null, "approval_expires_at": null, "consumed_at": null,
+      "server_time": "2026-11-01T04:07:01.909918Z"
+    }
+  ]
+}
+```
+
+#### `POST /customer/withdrawal-authorizations/{id}/approve`
+
+| Field | Rules |
+| --- | --- |
+| `pin` | required, exactly 6 digits |
+
+Checks the PIN with the shared counter, then `pending` → `approved`
+(`approval_expires_at` = now + 120 s). **200** with the request (`status: "approved"`).
+The PIN is never stored or echoed.
+
+**422**: wrong PIN (the request stays `pending` and can be approved with the right PIN):
+
+```json
+{ "message": "PIN salah. Sisa percobaan: 2.", "remaining_attempts": 2, "pin_locked_until": null }
+```
+
+PIN locked (`remaining_attempts: 0`, `pin_locked_until` set), request no longer pending
+(`status` included), or account suspended. Staff tokens get **403**.
+
+#### `POST /customer/withdrawal-authorizations/{id}/reject`
+
+`pending` → `rejected`. **200** with the request. **422** if it is no longer pending.
 
 ---
 
@@ -822,7 +1001,10 @@ Shared filters (interview: date range first, then teller and customer):
 #### `GET /audit/transactions` · `GET /audit/transactions/{id}`
 
 The transaction log (real-time log), newest first (default `per_page` 15), with
-`customer`, `teller`, `authorized_by` and `corrected_by`. The detail adds `journals`.
+`customer`, `teller`, `authorized_by` and `corrected_by`. The detail adds `journals`
+and, for a withdrawal approved in the mobile app, `withdrawal_authorization`
+(`{ "id": "01M6...", "method": "mobile", "approved_at": "..." }`; absent for PIN-at-terminal
+withdrawals).
 
 ```json
 {
@@ -913,6 +1095,7 @@ parameters are ignored.
 | `GET /customer/statement/export` | Own statement as PDF |
 | `POST /customer/pin` | Change PIN |
 | `POST /customer/logout` | Revoke the current token |
+| `GET /customer/withdrawal-authorizations` (and `/{id}`, `/{id}/approve`, `/{id}/reject`) | Approve or reject a withdrawal the teller started, see [withdrawal authorizations](#withdrawal-authorizations-mobile-approval) |
 
 Statement lines ([StatementLine](#statementline)) leave out tellers and journals:
 
@@ -934,7 +1117,7 @@ Statement lines ([StatementLine](#statementline)) leave out tellers and journals
 | `new_pin_confirmation` | must equal `new_pin` |
 
 **200** `{ "message": "PIN berhasil diubah." }`. A wrong `current_pin` counts toward the
-same lock as withdrawals (**422** with `remaining_attempts`).
+same lock as login and withdrawals (**422** with `remaining_attempts`).
 
 ---
 
@@ -972,6 +1155,7 @@ Passwords, PINs and idempotency keys never appear in responses.
 | `customer` | `{ id, account_number, full_name }` |
 | `teller` | `{ id, full_name }`, audit endpoints |
 | `journals` | `GET /audit/transactions/{id}` only |
+| `withdrawal_authorization` | Withdrawals approved in the mobile app: `{ id, method: "mobile", approved_at }`. Returned by `complete` and the audit detail |
 
 ### Journal
 
@@ -1014,8 +1198,11 @@ the transaction amount; exactly one debit and one credit per transaction),
    `POST /teller/shift/open`.
 2. For each customer: scan the card QR (or type the account number/NIS) →
    `GET /teller/customers/lookup` → check name, status and balance.
-3. Deposit: `POST /teller/deposits` with a new `Idempotency-Key`. Withdrawal: the
-   customer types their PIN on the confirmation screen → `POST /teller/withdrawals`.
+3. Deposit: `POST /teller/deposits` with a new `Idempotency-Key`. Withdrawal (default
+   `mobile` mode): `POST /teller/withdrawal-authorizations` → the customer approves in
+   the app with their PIN while the teller polls `GET .../{id}` → on `approved`,
+   `POST .../{id}/complete`. In `terminal` mode the customer types the PIN on the
+   confirmation screen → `POST /teller/withdrawals`.
 4. Print `GET /teller/transactions/{id}/receipt`.
 5. Mistake? `POST /teller/transactions/{id}/correct` with the supervisor's credentials,
    then record the right amount.
@@ -1035,11 +1222,13 @@ the transaction amount; exactly one debit and one credit per transaction),
 - Staff: create, import from a spreadsheet, block/unblock, delete unused accounts.
 - Accounts: open (number generated), print the card with QR, reset PIN, suspend,
   graduate (`deactivate`).
-- Settings: minimum balance and scanner mode.
+- Settings: minimum balance, scanner mode and withdrawal verification mode.
 - Reports: journal, audit trail and annual report as PDF.
 
 ### Customer (mobile app)
 
 `POST /login` with NIS/account number and PIN → `GET /customer/balance`,
 `GET /customer/transactions`, `GET /customer/card` (show the QR at the counter),
-`POST /customer/pin`, `POST /customer/logout`.
+`POST /customer/pin`, `POST /customer/logout`. At the counter, when the teller starts a
+withdrawal: poll `GET /customer/withdrawal-authorizations` → show amount, teller and
+balance after → `POST .../{id}/approve` with the PIN, or `POST .../{id}/reject`.

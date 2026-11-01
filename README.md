@@ -40,6 +40,8 @@ BANK_SCHOOL="SMK"
 BANK_MIN_BALANCE=10000          # nilai awal saldo minimum (admin dapat mengubahnya)
 BANK_PIN_MAX_ATTEMPTS=3         # PIN salah berturut-turut sebelum diblokir
 BANK_PIN_LOCK_MINUTES=15        # lama blokir PIN
+BANK_WITHDRAWAL_AUTH_PENDING_SECONDS=120   # batas waktu nasabah menyetujui penarikan di aplikasi
+BANK_WITHDRAWAL_AUTH_APPROVED_SECONDS=120  # batas waktu teller menyelesaikan setelah disetujui
 SANCTUM_EXPIRATION=480          # masa berlaku token dalam menit
 ```
 
@@ -48,6 +50,13 @@ Jalankan migration, seeder, dan server:
 ```bash
 php artisan migrate:fresh --seed
 php artisan serve
+```
+
+Scheduler (opsional tetapi disarankan) membersihkan token kedaluwarsa dan menandai
+permintaan penarikan yang terbengkalai sebagai kedaluwarsa setiap menit:
+
+```bash
+php artisan schedule:work
 ```
 
 Agar aplikasi mobile di HP dapat mengakses API, jalankan server di semua
@@ -100,10 +109,10 @@ Jika user database tidak memiliki izin tersebut, berikan dulu sebagai root:
 
 | Aktor | Alur |
 | --- | --- |
-| Teller | Buka shift (hitung saldo awal per pecahan) → scan QR kartu nasabah atau ketik nomor rekening/NIS → setor, atau tarik dengan PIN yang diketik nasabah → cetak struk → koreksi jika salah ketik (otorisasi supervisor) → tutup shift (hitung uang fisik, harus sama dengan saldo sistem) → cetak laporan harian |
+| Teller | Buka shift (hitung saldo awal per pecahan) → scan QR kartu nasabah atau ketik nomor rekening/NIS → setor, atau tarik: kirim permintaan ke aplikasi nasabah, tunggu disetujui, lalu selesaikan (atau, jika admin mengizinkan, nasabah mengetik PIN di loket) → cetak struk → koreksi jika salah ketik (otorisasi supervisor) → tutup shift (hitung uang fisik, harus sama dengan saldo sistem) → cetak laporan harian |
 | Supervisor | Periksa laporan satu per satu → setujui (kas otomatis pindah ke brankas), tahan dengan catatan, atau tolak (shift dibuka kembali untuk koreksi) → telusuri log audit dan jurnal |
-| Administrator | Kelola staf (buat, impor spreadsheet, blokir, hapus yang belum pernah dipakai), buka rekening (nomor otomatis `KODE-TAHUN-URUT`), cetak kartu QR, reset PIN, nonaktifkan lulusan, atur saldo minimum dan mode pemindai, unduh laporan PDF |
-| Nasabah | Lihat saldo, mutasi, kartu digital dengan QR, unduh mutasi PDF, ganti PIN |
+| Administrator | Kelola staf (buat, impor spreadsheet, blokir, hapus yang belum pernah dipakai), buka rekening (nomor otomatis `KODE-TAHUN-URUT`), cetak kartu QR, reset PIN, nonaktifkan lulusan, atur saldo minimum, mode pemindai, dan mode verifikasi penarikan, unduh laporan PDF |
+| Nasabah | Lihat saldo, mutasi, kartu digital dengan QR, unduh mutasi PDF, ganti PIN, setujui (dengan PIN) atau tolak permintaan penarikan dari teller |
 
 Daftar endpoint, parameter, dan contoh respons ada di [docs/API.md](docs/API.md).
 
@@ -117,8 +126,13 @@ Daftar endpoint, parameter, dan contoh respons ada di [docs/API.md](docs/API.md)
   yang dibatalkan.
 - **Saldo minimum:** penarikan ditolak jika sisa saldo di bawah saldo minimum
   (pengaturan admin, awal Rp10.000).
-- **PIN penarikan:** setiap penarikan wajib PIN 6 digit nasabah; 3 kali salah
-  memblokir penarikan selama 15 menit.
+- **PIN penarikan:** setiap penarikan wajib PIN 6 digit nasabah. Bawaannya
+  (`withdrawal_verification = mobile`) nasabah menyetujui di aplikasinya sendiri,
+  sehingga teller tidak pernah melihat atau mengirim PIN; nasabah tidak dapat
+  memulai penarikan. Admin dapat mengizinkan PIN diketik di loket (`terminal` atau
+  `both`). Detail: [docs/PIN_VERIFICATION.md](docs/PIN_VERIFICATION.md).
+- **Blokir PIN:** 3 kali PIN salah berturut-turut (saat login, persetujuan,
+  penarikan di loket, atau ganti PIN) memblokir PIN selama 15 menit di semua tempat.
 - **Shift dan penutupan kas:** transaksi hanya dapat dicatat dalam shift yang
   dibuka hari ini. Shift hanya dapat ditutup (dan laporannya dicetak) jika uang
   fisik = saldo awal + setoran − penarikan.

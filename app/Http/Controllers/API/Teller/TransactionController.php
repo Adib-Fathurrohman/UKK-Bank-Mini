@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\API\Teller;
 
+use App\Exceptions\WithdrawalVerificationModeException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Teller\CorrectionRequest;
 use App\Http\Requests\Teller\StoreTransactionRequest;
@@ -10,6 +11,7 @@ use App\Http\Resources\TransactionResource;
 use App\Models\Customer;
 use App\Models\Transaction;
 use App\Services\PdfReportService;
+use App\Services\SettingsService;
 use App\Services\TransactionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -57,8 +59,17 @@ class TransactionController extends Controller
         ));
     }
 
-    public function withdraw(WithdrawalRequest $request): JsonResponse
+    /**
+     * Withdrawal with the PIN typed on the teller terminal. Only allowed when the
+     * "withdrawal_verification" setting is "terminal" or "both"; by default the
+     * customer approves withdrawals in the mobile app instead.
+     */
+    public function withdraw(WithdrawalRequest $request, SettingsService $settings): JsonResponse
     {
+        if (! $settings->allowsTerminalWithdrawalVerification()) {
+            throw WithdrawalVerificationModeException::terminalDisabled();
+        }
+
         return $this->respond($this->transactions->withdraw(
             $this->customerFrom($request),
             $request->integer('amount'),

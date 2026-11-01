@@ -3,6 +3,7 @@
 use App\Enums\UserRoles;
 use App\Models\Customer;
 use App\Models\DailyReport;
+use App\Models\Setting;
 use App\Models\User;
 use App\Services\DailyReportService;
 use App\Support\Cash;
@@ -80,6 +81,15 @@ function closeShiftFor(User $teller): DailyReport
     $expected = $reports->summarize($reports->activeShift($teller))['system_balance'];
 
     return $reports->close($teller, Cash::breakdown($expected));
+}
+
+/**
+ * Allow withdrawals with the PIN typed at the teller terminal
+ * (POST /teller/withdrawals); the default mode only allows mobile approval.
+ */
+function allowTerminalWithdrawals(string $mode = 'terminal'): void
+{
+    Setting::updateOrCreate(['key' => 'withdrawal_verification'], ['value' => $mode]);
 }
 
 /**

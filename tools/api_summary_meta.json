@@ -1,0 +1,1385 @@
+{
+  "header": {
+    "name": "E-Teller Bank Mini API",
+    "source_of_truth": "Laravel backend implementation (routes, form requests, controllers, services, resources). This file is a generated index; see docs/API.md for examples.",
+    "base_url": "{APP_URL}/api (UNKNOWN for deployments; local default http://localhost:8000/api)",
+    "conventions": {
+      "headers": {
+        "Accept": "application/json (always)",
+        "Content-Type": "application/json when sending JSON",
+        "Authorization": "Bearer <token> when auth = bearer"
+      },
+      "money": "integer Rupiah",
+      "timestamps": "ISO 8601 UTC",
+      "dates": "YYYY-MM-DD, Asia/Jakarta",
+      "single_object": "{data: {...}}",
+      "paginated_list": "{data: [...], links: {first,last,prev,next}, meta: {current_page, from, last_page, links, path, per_page, to, total}}",
+      "sorting": "no sort parameters; fixed order per endpoint",
+      "errors": {
+        "401": "{message:'Unauthenticated.'} missing/invalid/expired token",
+        "403": "{message} wrong actor/role, blocked staff, closed customer, or admin account protection",
+        "404": "{message:'Data tidak ditemukan.'} not found or not owned",
+        "409": "{message} staff delete refused (has history)",
+        "422": "{message, errors?} validation (errors per field) or business rule (message only, sometimes extra fields)",
+        "429": "{message:'Too Many Attempts.'}",
+        "500": "{message} server error; money operations fully rolled back"
+      }
+    },
+    "auth": {
+      "mechanism": "Laravel Sanctum personal access tokens (bearer)",
+      "login": "POST /api/login",
+      "token_lifetime_minutes": 480,
+      "refresh": "not implemented",
+      "actors": {
+        "staff": "App\\Models\\User with role admin|supervisor|teller",
+        "customer": "App\\Models\\Customer (nasabah)"
+      }
+    },
+    "enums": {
+      "role": [
+        "admin",
+        "supervisor",
+        "teller"
+      ],
+      "account_status": [
+        "active",
+        "suspended",
+        "inactive"
+      ],
+      "transaction_type": [
+        "deposit",
+        "withdrawal",
+        "deposit_correction",
+        "withdrawal_correction"
+      ],
+      "report_status": [
+        "open",
+        "submitted",
+        "on_hold",
+        "approved",
+        "rejected"
+      ],
+      "account_code": {
+        "101": "Kas",
+        "201": "Tabungan Nasabah"
+      },
+      "position": [
+        "debit",
+        "credit"
+      ],
+      "qr_scanner_mode": [
+        "webcam",
+        "usb",
+        "disabled"
+      ],
+      "denominations": [
+        100000,
+        50000,
+        20000,
+        10000,
+        5000,
+        2000,
+        1000,
+        500,
+        200,
+        100
+      ],
+      "class": [
+        "X",
+        "XI",
+        "XII"
+      ],
+      "group": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "withdrawal_verification": [
+        "mobile",
+        "terminal",
+        "both"
+      ],
+      "withdrawal_authorization_status": [
+        "pending",
+        "approved",
+        "consumed",
+        "rejected",
+        "cancelled",
+        "expired"
+      ]
+    },
+    "rate_limiters": {
+      "login": "5 per minute per username/identifier + IP",
+      "withdrawal-authorization-create": "10 per minute per teller",
+      "withdrawal-authorization-poll": "120 per minute per actor (teller or customer)",
+      "withdrawal-authorization-decide": "5 per minute per customer"
+    }
+  },
+  "actions": {
+    "Admin\\CustomerController@store": {
+      "purpose": "Open a savings account; account number generated, status active, balance 0.",
+      "request": {
+        "body": {
+          "nis": {
+            "type": "string",
+            "required": true,
+            "rules": "max 20, unique (including closed accounts)"
+          },
+          "full_name": {
+            "type": "string",
+            "required": true,
+            "rules": "max 255"
+          },
+          "class": {
+            "type": "string",
+            "required": true,
+            "rules": "X|XI|XII"
+          },
+          "major_id": {
+            "type": "integer",
+            "required": true,
+            "rules": "exists in majors"
+          },
+          "group": {
+            "type": "string",
+            "required": true,
+            "rules": "1|2|3|4"
+          },
+          "pin": {
+            "type": "string",
+            "required": true,
+            "rules": "exactly 6 digits"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 {data: Customer {id, account_number, nis, full_name, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}",
+      "errors": [
+        "422 validation"
+      ],
+      "notes": "account_number, account_status and balance in the body are ignored. Format {MAJOR CODE}-{SCHOOL YEAR}-{SERIAL}, e.g. RPL-2026-001."
+    },
+    "Admin\\CustomerController@update": {
+      "purpose": "Edit account details, suspend/activate, or reset the PIN (partial).",
+      "request": {
+        "path_params": {
+          "customer": "integer id (closed accounts return 404)"
+        },
+        "body": {
+          "nis": {
+            "type": "string",
+            "required": false,
+            "rules": "max 20, unique ignoring self"
+          },
+          "full_name": {
+            "type": "string",
+            "required": false,
+            "rules": "max 255"
+          },
+          "class": {
+            "type": "string",
+            "required": false,
+            "rules": "X|XI|XII"
+          },
+          "major_id": {
+            "type": "integer",
+            "required": false,
+            "rules": "exists in majors"
+          },
+          "group": {
+            "type": "string",
+            "required": false,
+            "rules": "1|2|3|4"
+          },
+          "account_status": {
+            "type": "string",
+            "required": false,
+            "rules": "active|suspended (inactive refused)"
+          },
+          "pin": {
+            "type": "string",
+            "required": false,
+            "rules": "exactly 6 digits; also clears a PIN lock"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data: Customer {id, account_number, nis, full_name, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}",
+      "errors": [
+        "404",
+        "422"
+      ]
+    },
+    "Admin\\CustomerController@card": {
+      "purpose": "Data for printing the customer card; frontend renders qr_payload as a QR code.",
+      "request": {
+        "path_params": {
+          "customer": "integer id"
+        }
+      },
+      "response": "200 {data: CustomerCard {account_number, nis, full_name, class, group, major{code,major_name}, account_status, qr_payload ('BANKMINI:{account_number}')}}",
+      "errors": [
+        "404"
+      ]
+    },
+    "Admin\\CustomerController@deactivate": {
+      "purpose": "Graduate/close an account: status inactive, tokens revoked, soft deleted. No balance check, no undo endpoint.",
+      "request": {
+        "path_params": {
+          "customer": "integer id"
+        }
+      },
+      "response": "200 {data: Customer {id, account_number, nis, full_name, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}} with deleted_at set",
+      "errors": [
+        "404 already closed"
+      ]
+    },
+    "SettingsController@update": {
+      "purpose": "Change global settings (partial).",
+      "request": {
+        "body": {
+          "min_balance": {
+            "type": "integer",
+            "required": false,
+            "rules": "integer 0-1000000"
+          },
+          "qr_scanner_mode": {
+            "type": "string",
+            "required": false,
+            "rules": "webcam|usb|disabled"
+          },
+          "withdrawal_verification": {
+            "type": "string",
+            "required": false,
+            "rules": "mobile|terminal|both"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data:{min_balance, qr_scanner_mode, withdrawal_verification}}",
+      "errors": [
+        "422 validation"
+      ]
+    },
+    "Admin\\StaffController@store": {
+      "purpose": "Create a teller or supervisor.",
+      "request": {
+        "body": {
+          "username": {
+            "type": "string",
+            "required": true,
+            "rules": "alpha_dash, max 50, unique"
+          },
+          "full_name": {
+            "type": "string",
+            "required": true,
+            "rules": "max 255"
+          },
+          "password": {
+            "type": "string",
+            "required": true,
+            "rules": "min 8"
+          },
+          "role": {
+            "type": "string",
+            "required": true,
+            "rules": "teller|supervisor (admin refused)"
+          },
+          "class": {
+            "type": "string",
+            "required": false,
+            "rules": "nullable, max 20"
+          },
+          "phone": {
+            "type": "string",
+            "required": false,
+            "rules": "nullable, max 20, regex ^[0-9+\\-\\s]+$"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 {data: Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}}",
+      "errors": [
+        "422 validation"
+      ]
+    },
+    "Admin\\StaffController@import": {
+      "purpose": "Bulk-create tellers/supervisors from a spreadsheet.",
+      "request": {
+        "body": {
+          "file": {
+            "type": "file",
+            "required": true,
+            "rules": "xlsx|csv|txt, max 2048 KB, max 500 data rows; header row with username, full_name|nama|nama_lengkap, password|kata_sandi, role|peran, class|kelas, phone|no_wa|whatsapp|no_hp"
+          }
+        },
+        "row_rules": {
+          "username": "required, alpha_dash, max 50, unique, distinct in file",
+          "full_name": "required, max 255",
+          "password": "optional, min 8 (generated if blank)",
+          "role": "optional teller|supervisor, default teller",
+          "class": "optional max 20",
+          "phone": "optional max 20, regex ^[0-9+\\-\\s]+$"
+        },
+        "content_type": "multipart/form-data"
+      },
+      "response": "201 {data:{created:int, users:[Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at} + generated_password|null]}}",
+      "errors": [
+        "422 errors keyed rows.{index}.{field} (index 0 = sheet row 2); nothing is created"
+      ]
+    },
+    "Admin\\StaffController@destroy": {
+      "purpose": "Permanently delete a staff account that has no history.",
+      "request": {
+        "path_params": {
+          "staff": "integer id"
+        }
+      },
+      "response": "200 {message:'Akun staf dihapus.'}",
+      "errors": [
+        "409 staff has transactions/reports/approvals (block instead)",
+        "403 admin target",
+        "404"
+      ]
+    },
+    "Admin\\StaffController@update": {
+      "purpose": "Edit a teller or supervisor (partial).",
+      "request": {
+        "path_params": {
+          "staff": "integer id"
+        },
+        "body": {
+          "username": {
+            "type": "string",
+            "required": false,
+            "rules": "alpha_dash, max 50, unique ignoring self"
+          },
+          "full_name": {
+            "type": "string",
+            "required": false,
+            "rules": "max 255"
+          },
+          "password": {
+            "type": "string",
+            "required": false,
+            "rules": "min 8"
+          },
+          "role": {
+            "type": "string",
+            "required": false,
+            "rules": "teller|supervisor"
+          },
+          "class": {
+            "type": "string",
+            "required": false,
+            "rules": "nullable, max 20"
+          },
+          "phone": {
+            "type": "string",
+            "required": false,
+            "rules": "nullable, max 20, regex ^[0-9+\\-\\s]+$"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data: Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}}",
+      "errors": [
+        "403 'Akun administrator tidak dapat diubah melalui API.' for admin targets",
+        "404",
+        "422"
+      ]
+    },
+    "Admin\\StaffController@block": {
+      "purpose": "Block a staff account (is_active=false, tokens revoked).",
+      "request": {
+        "path_params": {
+          "staff": "integer id"
+        }
+      },
+      "response": "200 {data: Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}}",
+      "errors": [
+        "403 admin target",
+        "404"
+      ]
+    },
+    "Admin\\StaffController@unblock": {
+      "purpose": "Unblock a staff account.",
+      "request": {
+        "path_params": {
+          "staff": "integer id"
+        }
+      },
+      "response": "200 {data: Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}}",
+      "errors": [
+        "403 admin target",
+        "404"
+      ]
+    },
+    "Audit\\JournalController@index": {
+      "purpose": "Accounting journal lines, newest first, with transaction teller/customer.",
+      "request": {
+        "query": {
+          "from": "date or 'YYYY-MM-DD HH:MM'; date-only covers the whole day",
+          "to": "date or 'YYYY-MM-DD HH:MM'; after_or_equal:from",
+          "type": "deposit|withdrawal|deposit_correction|withdrawal_correction",
+          "teller_id": "integer",
+          "customer_id": "integer",
+          "teller": "string max 100, contains match on teller full_name or username",
+          "customer": "string max 100, contains match on customer full_name, account_number or nis",
+          "transaction_id": "integer",
+          "account_code": "101|201",
+          "position": "debit|credit",
+          "page": "integer, default 1",
+          "per_page": "integer, clamped 1-100"
+        }
+      },
+      "response": "200 paginated {data:[{id, transaction_id, account_code, account_name, position, amount, created_at, transaction{id,type,customer_id,user_id,customer{account_number,full_name},teller{full_name}}}], links, meta}; default per_page 30",
+      "errors": [
+        "422"
+      ]
+    },
+    "Audit\\JournalController@export": {
+      "purpose": "Journal report PDF with totals and balance check (max 5000 rows).",
+      "request": {
+        "query": {
+          "from": "date or 'YYYY-MM-DD HH:MM'; date-only covers the whole day",
+          "to": "date or 'YYYY-MM-DD HH:MM'; after_or_equal:from",
+          "type": "deposit|withdrawal|deposit_correction|withdrawal_correction",
+          "teller_id": "integer",
+          "customer_id": "integer",
+          "teller": "string max 100, contains match on teller full_name or username",
+          "customer": "string max 100, contains match on customer full_name, account_number or nis",
+          "transaction_id": "integer",
+          "account_code": "101|201",
+          "position": "debit|credit"
+        }
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "summary": "PDF download (Content-Disposition: attachment). Errors are JSON."
+      },
+      "errors": [
+        "422"
+      ]
+    },
+    "Audit\\JournalController@summary": {
+      "purpose": "Trial balance per account with the same filters.",
+      "request": {
+        "query": {
+          "from": "date or 'YYYY-MM-DD HH:MM'; date-only covers the whole day",
+          "to": "date or 'YYYY-MM-DD HH:MM'; after_or_equal:from",
+          "type": "deposit|withdrawal|deposit_correction|withdrawal_correction",
+          "teller_id": "integer",
+          "customer_id": "integer",
+          "teller": "string max 100, contains match on teller full_name or username",
+          "customer": "string max 100, contains match on customer full_name, account_number or nis",
+          "transaction_id": "integer",
+          "account_code": "101|201",
+          "position": "debit|credit"
+        }
+      },
+      "response": "200 {data:{accounts:[{account_code, account_name, total_debit, total_credit}], total_debit, total_credit, is_balanced}}",
+      "errors": [
+        "422"
+      ]
+    },
+    "Audit\\TransactionController@index": {
+      "purpose": "Transaction log (audit trail), newest first.",
+      "request": {
+        "query": {
+          "from": "date or 'YYYY-MM-DD HH:MM'; date-only covers the whole day",
+          "to": "date or 'YYYY-MM-DD HH:MM'; after_or_equal:from",
+          "type": "deposit|withdrawal|deposit_correction|withdrawal_correction",
+          "teller_id": "integer",
+          "customer_id": "integer",
+          "teller": "string max 100, contains match on teller full_name or username",
+          "customer": "string max 100, contains match on customer full_name, account_number or nis",
+          "page": "integer, default 1",
+          "per_page": "integer, clamped 1-100"
+        }
+      },
+      "response": "200 paginated {data:[Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?} with customer, teller, authorized_by, corrected_by], links, meta}; default per_page 15",
+      "errors": [
+        "422 invalid filters"
+      ]
+    },
+    "Audit\\TransactionController@export": {
+      "purpose": "Audit trail PDF (max 5000 rows).",
+      "request": {
+        "query": {
+          "from": "date or 'YYYY-MM-DD HH:MM'; date-only covers the whole day",
+          "to": "date or 'YYYY-MM-DD HH:MM'; after_or_equal:from",
+          "type": "deposit|withdrawal|deposit_correction|withdrawal_correction",
+          "teller_id": "integer",
+          "customer_id": "integer",
+          "teller": "string max 100, contains match on teller full_name or username",
+          "customer": "string max 100, contains match on customer full_name, account_number or nis"
+        }
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "summary": "PDF download (Content-Disposition: attachment). Errors are JSON."
+      },
+      "errors": [
+        "422"
+      ]
+    },
+    "Audit\\TransactionController@show": {
+      "purpose": "One transaction with journal lines and correction links.",
+      "request": {
+        "path_params": {
+          "transaction": "integer id"
+        }
+      },
+      "response": "200 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, withdrawal_authorization?, customer{id,account_number,full_name}, teller?, journals?} incl. journals; withdrawal_authorization {id, method:'mobile', approved_at} for withdrawals approved in the mobile app}",
+      "errors": [
+        "404"
+      ]
+    },
+    "Customer\\AccountController@balance": {
+      "purpose": "Own balance.",
+      "ownership": "scoped to the authenticated user",
+      "request": {},
+      "response": "200 {data:{account_number, full_name, account_status, balance, min_balance, as_of}}"
+    },
+    "Customer\\AccountController@card": {
+      "purpose": "Own digital card; render qr_payload as a QR code for the teller.",
+      "ownership": "scoped to the authenticated user",
+      "request": {},
+      "response": "200 {data: CustomerCard {account_number, nis, full_name, class, group, major{code,major_name}, account_status, qr_payload ('BANKMINI:{account_number}')}}"
+    },
+    "Customer\\AuthController@login": {
+      "purpose": "Customer-only login (alias of POST /api/login).",
+      "request": {
+        "body": {
+          "identifier": {
+            "type": "string",
+            "required": true,
+            "rules": "required, max 50; NIS or account number"
+          },
+          "pin": {
+            "type": "string",
+            "required": true,
+            "rules": "exactly 6 digits"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data:{actor:'customer', token, token_type:'Bearer', customer: Customer}}",
+      "errors": [
+        "422 wrong NIS/account number or PIN",
+        "422 PIN locked: 'Terlalu banyak percobaan PIN salah. Coba lagi pukul HH:MM.' (shared lock; remaining attempts are not revealed before the lock)",
+        "429"
+      ]
+    },
+    "Customer\\AuthController@logout": {
+      "purpose": "Revoke the current customer token.",
+      "ownership": "scoped to the authenticated user",
+      "request": {},
+      "response": "200 {message:'Berhasil keluar.'}"
+    },
+    "Customer\\AuthController@me": {
+      "purpose": "Current customer with major.",
+      "ownership": "scoped to the authenticated user",
+      "request": {},
+      "response": "200 {data: Customer {id, account_number, nis, full_name, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}"
+    },
+    "Customer\\AccountController@changePin": {
+      "purpose": "Change own PIN.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "body": {
+          "current_pin": {
+            "type": "string",
+            "required": true,
+            "rules": "exactly 6 digits; wrong values count toward the shared PIN lock"
+          },
+          "new_pin": {
+            "type": "string",
+            "required": true,
+            "rules": "exactly 6 digits, different from current_pin, confirmed"
+          },
+          "new_pin_confirmation": {
+            "type": "string",
+            "required": true,
+            "rules": "must equal new_pin"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {message:'PIN berhasil diubah.'}",
+      "errors": [
+        "422 validation",
+        "422 wrong current PIN {remaining_attempts, pin_locked_until}",
+        "422 PIN locked"
+      ]
+    },
+    "Customer\\AccountController@statement": {
+      "purpose": "Own statement PDF.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "query": {
+          "from": "date, optional",
+          "to": "date, optional, after_or_equal:from"
+        }
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "summary": "PDF download (Content-Disposition: attachment). Errors are JSON."
+      },
+      "errors": [
+        "422"
+      ]
+    },
+    "Customer\\AccountController@transactions": {
+      "purpose": "Own statement lines, newest first.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "query": {
+          "from": "date, optional",
+          "to": "date, optional, after_or_equal:from",
+          "type": "deposit|withdrawal|deposit_correction|withdrawal_correction",
+          "page": "integer, default 1",
+          "per_page": "integer, clamped 1-100"
+        }
+      },
+      "response": "200 paginated {data:[{id, type, direction:'in'|'out', description, amount, balance_after, created_at}], links, meta}; default per_page 20",
+      "errors": [
+        "422"
+      ]
+    },
+    "Customer\\AccountController@transaction": {
+      "purpose": "One own statement line.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "path_params": {
+          "transaction": "integer id (numeric only)"
+        }
+      },
+      "response": "200 {data: StatementLine}",
+      "errors": [
+        "404 not own"
+      ]
+    },
+    "Admin\\CustomerController@index": {
+      "purpose": "List customer accounts sorted by name.",
+      "request": {
+        "query": {
+          "search": "contains match on full_name, nis, account_number",
+          "major_id": "not validated",
+          "class": "not validated",
+          "group": "not validated",
+          "status": "not validated",
+          "trashed": "with | only (closed accounts); default excludes closed",
+          "page": "integer, default 1",
+          "per_page": "integer, clamped 1-100"
+        }
+      },
+      "response": "200 paginated {data:[Customer {id, account_number, nis, full_name, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}], links, meta}; default per_page 15"
+    },
+    "Admin\\CustomerController@show": {
+      "purpose": "One customer account (closed accounts included).",
+      "request": {
+        "path_params": {
+          "customer": "integer id"
+        }
+      },
+      "response": "200 {data: Customer {id, account_number, nis, full_name, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}",
+      "errors": [
+        "404"
+      ]
+    },
+    "Admin\\CustomerController@statement": {
+      "purpose": "Customer statement PDF (kartu simpanan) for any customer, closed accounts included.",
+      "request": {
+        "path_params": {
+          "customer": "integer id"
+        },
+        "query": {
+          "from": "date, optional",
+          "to": "date, optional, after_or_equal:from"
+        }
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "summary": "PDF download (Content-Disposition: attachment). Errors are JSON."
+      },
+      "errors": [
+        "404",
+        "422"
+      ]
+    },
+    "LoginController": {
+      "purpose": "Single login gateway for all roles. Staff send username+password, customers send identifier+pin.",
+      "request": {
+        "body": {
+          "username": {
+            "type": "string",
+            "required": true,
+            "rules": "required, max 255"
+          },
+          "password": {
+            "type": "string",
+            "required": true,
+            "rules": "required"
+          },
+          "identifier": {
+            "type": "string",
+            "required": true,
+            "rules": "required, max 50; NIS or account number"
+          },
+          "pin": {
+            "type": "string",
+            "required": true,
+            "rules": "exactly 6 digits"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data:{actor:'staff'|'customer', token, token_type:'Bearer', user: Staff | customer: Customer}}",
+      "errors": [
+        "422 wrong credentials / blocked staff / closed account / missing fields",
+        "422 PIN locked: 'Terlalu banyak percobaan PIN salah. Coba lagi pukul HH:MM.' (shared lock; remaining attempts are not revealed before the lock)",
+        "429 more than 5 attempts per minute per identifier+IP"
+      ],
+      "notes": "If username is filled the staff login runs; else if identifier is filled the customer login runs; else 422 on username. Customer PINs are checked through the shared PIN lock (3 wrong in a row lock login, withdrawal approval and PIN change for 15 minutes)."
+    },
+    "MajorController@index": {
+      "purpose": "All majors for dropdowns (not paginated).",
+      "request": {},
+      "response": "200 {data:[{id, code, major_name}]} sorted by name"
+    },
+    "ReportController@annual": {
+      "purpose": "Annual report PDF for one school year (July-June): balances per product and per account.",
+      "request": {
+        "query": {
+          "school_year": "integer 2000-2100, optional; default current school year; 2026 means 2026/2027"
+        }
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "summary": "PDF download (Content-Disposition: attachment). Errors are JSON."
+      },
+      "errors": [
+        "422"
+      ]
+    },
+    "SettingsController@show": {
+      "purpose": "Read global settings.",
+      "request": {},
+      "response": "200 {data:{min_balance:int, qr_scanner_mode:'webcam'|'usb'|'disabled', withdrawal_verification:'mobile'|'terminal'|'both'}}"
+    },
+    "Admin\\StaffController@index": {
+      "purpose": "List staff sorted by name.",
+      "request": {
+        "query": {
+          "status": "active (default) | inactive | all — not validated",
+          "role": "admin|supervisor|teller — not validated",
+          "search": "contains match on username or full_name",
+          "page": "integer, default 1",
+          "per_page": "integer, clamped 1-100"
+        }
+      },
+      "response": "200 paginated {data:[Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}], links, meta}; default per_page 15"
+    },
+    "Staff\\AuthController@login": {
+      "purpose": "Staff-only login (alias of POST /api/login).",
+      "request": {
+        "body": {
+          "username": {
+            "type": "string",
+            "required": true,
+            "rules": "required, max 255"
+          },
+          "password": {
+            "type": "string",
+            "required": true,
+            "rules": "required"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data:{actor:'staff'|'customer', token, token_type:'Bearer', user: Staff | customer: Customer}}",
+      "errors": [
+        "422",
+        "429"
+      ]
+    },
+    "Staff\\AuthController@logout": {
+      "purpose": "Revoke the current staff token.",
+      "request": {},
+      "response": "200 {message:'Berhasil keluar.'}"
+    },
+    "Staff\\AuthController@me": {
+      "purpose": "Current staff user.",
+      "request": {},
+      "response": "200 {data: Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}}"
+    },
+    "Admin\\StaffController@show": {
+      "purpose": "One staff member.",
+      "request": {
+        "path_params": {
+          "staff": "integer id"
+        }
+      },
+      "response": "200 {data: Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}}",
+      "errors": [
+        "404"
+      ]
+    },
+    "Supervisor\\CashTransferController@index": {
+      "purpose": "Vault ledger (cash moved from teller drawers by approvals), newest first.",
+      "request": {
+        "query": {
+          "from": "date, optional",
+          "to": "date, optional, after_or_equal:from",
+          "teller_id": "integer",
+          "page": "integer, default 1",
+          "per_page": "integer, clamped 1-100"
+        }
+      },
+      "response": "200 paginated {data:[{id, source:'teller_drawer', destination:'main_vault', amount, transferred_at, daily_report{id,report_date,teller{id,full_name}}, approved_by{id,full_name}}], links, meta, total_amount}; default per_page 15",
+      "errors": [
+        "422"
+      ]
+    },
+    "Supervisor\\CashTransferController@show": {
+      "purpose": "One cash transfer.",
+      "request": {
+        "path_params": {
+          "cashTransfer": "integer id"
+        }
+      },
+      "response": "200 {data: CashTransfer}",
+      "errors": [
+        "404"
+      ]
+    },
+    "Supervisor\\DailyReportController@index": {
+      "purpose": "All daily reports (open shifts with live totals), newest date first.",
+      "request": {
+        "query": {
+          "status": "open|submitted|on_hold|approved|rejected",
+          "date": "date",
+          "teller_id": "integer",
+          "page": "integer, default 1",
+          "per_page": "integer, clamped 1-100"
+        }
+      },
+      "response": "200 paginated {data:[DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?} with teller, supervisor], links, meta}; default per_page 15",
+      "errors": [
+        "422 invalid status/date"
+      ]
+    },
+    "Supervisor\\DailyReportController@show": {
+      "purpose": "One report with counts, cash transfer and transactions.",
+      "request": {
+        "path_params": {
+          "dailyReport": "integer id"
+        }
+      },
+      "response": "200 {data: DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?}, transactions:[Transaction]}",
+      "errors": [
+        "404"
+      ]
+    },
+    "Supervisor\\DailyReportController@approve": {
+      "purpose": "Approve a submitted/on_hold report; creates the drawer-to-vault cash transfer (if counted cash > 0). Final.",
+      "request": {
+        "path_params": {
+          "dailyReport": "integer id"
+        },
+        "body": {
+          "note": {
+            "type": "string",
+            "required": false,
+            "rules": "nullable, max 1000"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data: DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?} with cash_transfer}",
+      "errors": [
+        "422 status does not allow approval",
+        "404"
+      ]
+    },
+    "Supervisor\\DailyReportController@export": {
+      "purpose": "Daily closing report PDF.",
+      "request": {
+        "path_params": {
+          "dailyReport": "integer id"
+        }
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "summary": "PDF download (Content-Disposition: attachment). Errors are JSON."
+      },
+      "errors": [
+        "422 not closed with matching cash",
+        "404"
+      ]
+    },
+    "Supervisor\\DailyReportController@hold": {
+      "purpose": "Put a submitted report on hold.",
+      "request": {
+        "path_params": {
+          "dailyReport": "integer id"
+        },
+        "body": {
+          "note": {
+            "type": "string",
+            "required": true,
+            "rules": "required, max 1000"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data: DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?}}",
+      "errors": [
+        "422 note missing",
+        "422 already on hold / not awaiting review",
+        "404"
+      ]
+    },
+    "Supervisor\\DailyReportController@reject": {
+      "purpose": "Reject a submitted/on_hold report; the shift becomes active again for the teller.",
+      "request": {
+        "path_params": {
+          "dailyReport": "integer id"
+        },
+        "body": {
+          "note": {
+            "type": "string",
+            "required": true,
+            "rules": "required, max 1000"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data: DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?}}",
+      "errors": [
+        "422 note missing",
+        "422 not awaiting review",
+        "422 teller runs another shift",
+        "404"
+      ]
+    },
+    "Teller\\CustomerLookupController": {
+      "purpose": "Find one non-closed customer by scanned QR payload, account number (tried first) or NIS.",
+      "request": {
+        "query": {
+          "identifier": "required, string, max 60; 'BANKMINI:' prefix is stripped; URL-encode"
+        }
+      },
+      "response": "200 {data:{id, account_number, nis, full_name, class, group, major_name, account_status, balance, pin_locked_until (only while in the future)}}",
+      "errors": [
+        "404 'Nasabah tidak ditemukan.'",
+        "422"
+      ]
+    },
+    "Teller\\DailyReportController@index": {
+      "purpose": "The teller's own shifts, newest date first.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "query": {
+          "page": "integer, default 1",
+          "per_page": "integer, clamped 1-100"
+        }
+      },
+      "response": "200 paginated {data:[DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?}], links, meta}; default per_page 15"
+    },
+    "Teller\\DailyReportController@show": {
+      "purpose": "One own shift with counts, cash transfer and transactions.",
+      "ownership": "own records only; others return 404",
+      "request": {
+        "path_params": {
+          "dailyReport": "integer id"
+        }
+      },
+      "response": "200 {data: DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?}, transactions:[Transaction]}",
+      "errors": [
+        "404 not own"
+      ]
+    },
+    "Teller\\DailyReportController@export": {
+      "purpose": "Own daily closing report PDF.",
+      "ownership": "own records only; others return 404",
+      "request": {
+        "path_params": {
+          "dailyReport": "integer id"
+        }
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "summary": "PDF download (Content-Disposition: attachment). Errors are JSON."
+      },
+      "errors": [
+        "422 shift not closed with matching cash (status must be submitted, on_hold or approved)",
+        "404 not own"
+      ]
+    },
+    "Teller\\TransactionController@deposit": {
+      "purpose": "Record a cash deposit in the active shift.",
+      "request": {
+        "headers": {
+          "Idempotency-Key": {
+            "required": false,
+            "rules": "string, max 100, regex ^[A-Za-z0-9_.:-]+$",
+            "behavior": "same key + same request returns the original transaction with 200 (header Idempotent-Replayed: true); same key + different request returns 422"
+          }
+        },
+        "body": {
+          "account_number": {
+            "type": "string",
+            "required": true,
+            "rules": "exists in customers and not closed"
+          },
+          "amount": {
+            "type": "integer",
+            "required": true,
+            "rules": "integer 1-100000000 (backend does not require multiples of 100; frontend should)"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?}}; 200 on idempotent replay",
+      "errors": [
+        "422 validation",
+        "422 no shift / shift closed / earlier shift still open",
+        "422 account not active",
+        "422 idempotency key conflict"
+      ]
+    },
+    "Teller\\ShiftController@show": {
+      "purpose": "The teller's active shift (open or rejected) with live totals and its transactions.",
+      "ownership": "scoped to the authenticated user",
+      "request": {},
+      "response": "200 {data: DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?}, can_transact: bool, transactions:[Transaction]} or {data:null, can_transact:false, closed_today:bool}",
+      "notes": "For a rejected shift, physical_balance, difference and closing_counts are stale values from the rejected close."
+    },
+    "Teller\\ShiftController@close": {
+      "purpose": "Close the active shift; physical cash must equal opening + net deposits - net withdrawals.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "body": {
+          "denominations": {
+            "type": "object",
+            "required": true,
+            "rules": "present; keys only [100000, 50000, 20000, 10000, 5000, 2000, 1000, 500, 200, 100]; values integer 0-100000",
+            "example": {
+              "50000": 2,
+              "10000": 5
+            }
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data: DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?} status submitted, difference 0, closing_counts}",
+      "errors": [
+        "422 cash mismatch with system_balance, physical_balance, difference (nothing saved)",
+        "422 no active shift"
+      ]
+    },
+    "Teller\\ShiftController@open": {
+      "purpose": "Open today's shift with the opening cash count.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "body": {
+          "denominations": {
+            "type": "object",
+            "required": true,
+            "rules": "present; keys only [100000, 50000, 20000, 10000, 5000, 2000, 1000, 500, 200, 100]; values integer 0-100000",
+            "example": {
+              "50000": 2,
+              "10000": 5
+            }
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 {data: DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?} with opening_counts}",
+      "errors": [
+        "422 a shift is still active",
+        "422 today's shift already closed",
+        "422 invalid denominations"
+      ]
+    },
+    "Teller\\TransactionController@index": {
+      "purpose": "The teller's own transactions for one date, newest first.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "query": {
+          "date": "date, default today",
+          "page": "integer, default 1",
+          "per_page": "integer, clamped 1-100"
+        }
+      },
+      "response": "200 paginated {data:[Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?} with corrected_by, authorized_by], links, meta}; default per_page 50"
+    },
+    "Teller\\TransactionController@correct": {
+      "purpose": "Reverse an own deposit/withdrawal from the original's still-active shift with a correction transaction.",
+      "ownership": "own records only; others return 404",
+      "request": {
+        "path_params": {
+          "transaction": "integer id of the original"
+        },
+        "headers": {
+          "Idempotency-Key": {
+            "required": false,
+            "rules": "string, max 100, regex ^[A-Za-z0-9_.:-]+$",
+            "behavior": "same key + same request returns the original transaction with 200 (header Idempotent-Replayed: true); same key + different request returns 422"
+          }
+        },
+        "body": {
+          "reason": {
+            "type": "string",
+            "required": true,
+            "rules": "max 255"
+          },
+          "supervisor_username": {
+            "type": "string",
+            "required": true,
+            "rules": "username of an active supervisor"
+          },
+          "supervisor_password": {
+            "type": "string",
+            "required": true,
+            "rules": "that supervisor's password"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?} type deposit_correction|withdrawal_correction with corrects_transaction_id, authorized_by}; 200 on replay",
+      "errors": [
+        "422 errors.supervisor_password",
+        "422 already corrected",
+        "422 correction of a correction",
+        "422 wrong/closed shift",
+        "422 deposit correction would make balance negative",
+        "404 not own",
+        "429 more than 10 per minute"
+      ]
+    },
+    "Teller\\TransactionController@receipt": {
+      "purpose": "Receipt PDF (80 mm) for an own transaction.",
+      "ownership": "own records only; others return 404",
+      "request": {
+        "path_params": {
+          "transaction": "integer id"
+        }
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "summary": "PDF download (Content-Disposition: attachment). Errors are JSON."
+      },
+      "errors": [
+        "404 not own"
+      ]
+    },
+    "Teller\\TransactionController@withdraw": {
+      "purpose": "Record a cash withdrawal with the customer's PIN typed at the teller terminal (mode B). Only when the withdrawal_verification setting is terminal or both.",
+      "request": {
+        "headers": {
+          "Idempotency-Key": {
+            "required": false,
+            "rules": "string, max 100, regex ^[A-Za-z0-9_.:-]+$",
+            "behavior": "same key + same request returns the original transaction with 200 (header Idempotent-Replayed: true); same key + different request returns 422"
+          }
+        },
+        "body": {
+          "account_number": {
+            "type": "string",
+            "required": true,
+            "rules": "exists in customers and not closed"
+          },
+          "amount": {
+            "type": "integer",
+            "required": true,
+            "rules": "integer 1-100000000; balance - amount >= min_balance setting"
+          },
+          "pin": {
+            "type": "string",
+            "required": true,
+            "rules": "exactly 6 digits; checked before shift/status/balance; 3 wrong in a row lock the PIN for 15 minutes (shared with login and mobile approval)"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?}}; 200 on idempotent replay (PIN not re-checked)",
+      "errors": [
+        "422 withdrawal_verification is mobile: 'Penarikan harus disetujui nasabah melalui aplikasi. ...'",
+        "422 wrong PIN {message, remaining_attempts, pin_locked_until}",
+        "422 PIN locked",
+        "422 insufficient balance (minimum balance)",
+        "422 deposit errors"
+      ]
+    },
+    "Teller\\WithdrawalAuthorizationController@store": {
+      "purpose": "Start a withdrawal that the customer approves with their PIN in the mobile app (mode A). No money moves. Only when withdrawal_verification is mobile or both.",
+      "request": {
+        "body": {
+          "account_number": {
+            "type": "string",
+            "required": true,
+            "rules": "exists in customers and not closed"
+          },
+          "amount": {
+            "type": "integer",
+            "required": true,
+            "rules": "integer 1-100000000; balance - amount >= min_balance setting"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 {data: WithdrawalAuthorization {id (ULID), status, status_label, amount, amount_in_words, customer{id,account_number,full_name,class}, daily_report_id, created_at, expires_at, approved_at, approval_expires_at, rejected_at, cancelled_at, cancel_reason, consumed_at, transaction_id, server_time}} with status 'pending' and expires_at = now + 120 s",
+      "errors": [
+        "422 validation",
+        "422 mode disabled",
+        "422 this teller already has an open request",
+        "422 the customer already has an open request",
+        "422 PIN locked {remaining_attempts:0, pin_locked_until}",
+        "422 insufficient balance (minimum balance)",
+        "422 no shift / shift closed / earlier shift still open",
+        "422 account not active"
+      ]
+    },
+    "Teller\\WithdrawalAuthorizationController@index": {
+      "purpose": "The teller's own withdrawal requests created today, newest first; ?status=open returns only the open one (to resume after a reload).",
+      "ownership": "own requests only (teller_id); others return 404",
+      "request": {
+        "query": {
+          "status": {
+            "required": false,
+            "rules": "open"
+          },
+          "page": {
+            "required": false,
+            "rules": "integer"
+          },
+          "per_page": {
+            "required": false,
+            "rules": "1-100, default 15"
+          }
+        }
+      },
+      "response": "200 paginated {data: [WithdrawalAuthorization {id (ULID), status, status_label, amount, amount_in_words, customer{id,account_number,full_name,class}, daily_report_id, created_at, expires_at, approved_at, approval_expires_at, rejected_at, cancelled_at, cancel_reason, consumed_at, transaction_id, server_time}], links, meta}",
+      "errors": [
+        "422 invalid status filter"
+      ]
+    },
+    "Teller\\WithdrawalAuthorizationController@show": {
+      "purpose": "Current status of one request, for polling (expiry is applied on read).",
+      "ownership": "own requests only (teller_id); others return 404",
+      "request": {
+        "path_params": {
+          "withdrawalAuthorization": "ULID (data.id of the request)"
+        }
+      },
+      "response": "200 {data: WithdrawalAuthorization {id (ULID), status, status_label, amount, amount_in_words, customer{id,account_number,full_name,class}, daily_report_id, created_at, expires_at, approved_at, approval_expires_at, rejected_at, cancelled_at, cancel_reason, consumed_at, transaction_id, server_time}}",
+      "errors": [
+        "404"
+      ]
+    },
+    "Teller\\WithdrawalAuthorizationController@cancel": {
+      "purpose": "Cancel a pending or approved request (cancel_reason 'teller').",
+      "ownership": "own requests only (teller_id); others return 404",
+      "request": {
+        "path_params": {
+          "withdrawalAuthorization": "ULID (data.id of the request)"
+        }
+      },
+      "response": "200 {data: WithdrawalAuthorization {id (ULID), status, status_label, amount, amount_in_words, customer{id,account_number,full_name,class}, daily_report_id, created_at, expires_at, approved_at, approval_expires_at, rejected_at, cancelled_at, cancel_reason, consumed_at, transaction_id, server_time}} with status 'cancelled'",
+      "errors": [
+        "404",
+        "422 not usable in the current status {message, status}"
+      ]
+    },
+    "Teller\\WithdrawalAuthorizationController@complete": {
+      "purpose": "Execute an approved request: record the withdrawal for the account and amount stored in the request, mark it consumed, write the journal, all in one DB transaction. Safe to retry.",
+      "ownership": "own requests only (teller_id); others return 404",
+      "request": {
+        "path_params": {
+          "withdrawalAuthorization": "ULID (data.id of the request)"
+        }
+      },
+      "response": "201 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, withdrawal_authorization?, customer{id,account_number,full_name}, teller?, journals?}} with withdrawal_authorization {id, method:'mobile', approved_at}; 200 with the same transaction if called again",
+      "errors": [
+        "404",
+        "422 not usable in the current status {message, status} (e.g. still pending)",
+        "422 approval expired",
+        "422 request belongs to another shift / no open shift",
+        "422 insufficient balance (minimum balance)",
+        "422 account not active"
+      ]
+    },
+    "Customer\\WithdrawalAuthorizationController@index": {
+      "purpose": "The customer's own open withdrawal requests (pending or approved), not paginated. Poll while the app is open.",
+      "ownership": "scoped to the authenticated customer",
+      "request": {},
+      "response": "200 {data: [CustomerWithdrawalAuthorization {id (ULID), status, status_label, amount, amount_in_words, account_number, balance, balance_after (null once not open), teller{full_name}, created_at, expires_at, approved_at, approval_expires_at, consumed_at, server_time}]}"
+    },
+    "Customer\\WithdrawalAuthorizationController@show": {
+      "purpose": "One own withdrawal request in any status.",
+      "ownership": "own requests only (customer_id); others return 404",
+      "request": {
+        "path_params": {
+          "withdrawalAuthorization": "ULID (data.id of the request)"
+        }
+      },
+      "response": "200 {data: CustomerWithdrawalAuthorization {id (ULID), status, status_label, amount, amount_in_words, account_number, balance, balance_after (null once not open), teller{full_name}, created_at, expires_at, approved_at, approval_expires_at, consumed_at, server_time}}",
+      "errors": [
+        "404"
+      ]
+    },
+    "Customer\\WithdrawalAuthorizationController@approve": {
+      "purpose": "Approve a pending request with the customer's PIN (pending -> approved, approval valid 120 s). The PIN is never stored or returned.",
+      "ownership": "own requests only (customer_id); others return 404",
+      "request": {
+        "path_params": {
+          "withdrawalAuthorization": "ULID (data.id of the request)"
+        },
+        "body": {
+          "pin": {
+            "type": "string",
+            "required": true,
+            "rules": "exactly 6 digits; shared PIN lock (3 wrong in a row lock 15 minutes)"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data: CustomerWithdrawalAuthorization {id (ULID), status, status_label, amount, amount_in_words, account_number, balance, balance_after (null once not open), teller{full_name}, created_at, expires_at, approved_at, approval_expires_at, consumed_at, server_time}} with status 'approved'",
+      "errors": [
+        "422 validation",
+        "422 wrong PIN {message, remaining_attempts, pin_locked_until} (request stays pending)",
+        "422 PIN locked",
+        "422 not usable in the current status {message, status}",
+        "422 account not active",
+        "404"
+      ]
+    },
+    "Customer\\WithdrawalAuthorizationController@reject": {
+      "purpose": "Reject a pending request (pending -> rejected).",
+      "ownership": "own requests only (customer_id); others return 404",
+      "request": {
+        "path_params": {
+          "withdrawalAuthorization": "ULID (data.id of the request)"
+        }
+      },
+      "response": "200 {data: CustomerWithdrawalAuthorization {id (ULID), status, status_label, amount, amount_in_words, account_number, balance, balance_after (null once not open), teller{full_name}, created_at, expires_at, approved_at, approval_expires_at, consumed_at, server_time}} with status 'rejected'",
+      "errors": [
+        "404",
+        "422 not usable in the current status {message, status}"
+      ]
+    }
+  }
+}

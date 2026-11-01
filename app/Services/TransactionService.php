@@ -4,13 +4,16 @@ namespace App\Services;
 
 use App\Enums\AccountStatus;
 use App\Enums\TransactionTypes;
+use App\Enums\WithdrawalAuthorizationStatus as AuthorizationStatus;
 use App\Exceptions\AccountNotActiveException;
+use App\Exceptions\AuthorizationNotUsableException;
 use App\Exceptions\CorrectionNotAllowedException;
 use App\Exceptions\IdempotencyConflictException;
 use App\Exceptions\InsufficientBalanceException;
 use App\Models\Customer;
 use App\Models\Transaction;
 use App\Models\User;
+use App\Models\WithdrawalAuthorization;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -56,6 +59,31 @@ class TransactionService
     }
 
     /**
+     * Complete a withdrawal the customer approved in the mobile app.
+     *
+     * Account and amount come from the authorization, never from the request.
+     * The authorization is consumed in the same database transaction as the
+     * withdrawal, so it produces at most one withdrawal; a repeated call returns
+     * that same withdrawal.
+     */
+    public function completeAuthorizedWithdrawal(WithdrawalAuthorization $authorization, User $teller): Transaction
+    {
+        $authorization = $authorization->fresh();
+
+        if ($authorization->status === AuthorizationStatus::CONSUMED) {
+            return $authorization->transaction()->with('customer')->firstOrFail();
+        }
+
+        return $this->record(
+            TransactionTypes::WITHDRAWAL,
+            $authorization->customer,
+            $authorization->amount,
+            $teller,
+            authorization: $authorization,
+        );
+    }
+
+    /**
      * Reverse a transaction typed in error (interview: "transaksi koreksi").
      *
      * Saved transactions are never edited; instead a correction of the same
@@ -81,13 +109,14 @@ class TransactionService
         ?User $supervisor = null,
         ?string $note = null,
         ?string $idempotencyKey = null,
+        ?WithdrawalAuthorization $authorization = null,
     ): Transaction {
         if ($amount <= 0) {
             throw new InvalidArgumentException('Nominal transaksi harus lebih dari nol.');
         }
 
         try {
-            return DB::transaction(function () use ($type, $customer, $amount, $teller, $original, $supervisor, $note, $idempotencyKey) {
+            return DB::transaction(function () use ($type, $customer, $amount, $teller, $original, $supervisor, $note, $idempotencyKey, $authorization) {
                 // Locks are always taken teller, shift, (original,) then customer, to avoid
                 // deadlocks. The teller and shift locks keep the shift from closing halfway
                 // through and serialize the teller's requests for the idempotency check.
@@ -101,6 +130,15 @@ class TransactionService
 
                 if ($original) {
                     $this->ensureCorrectable($original, $teller);
+                }
+
+                if ($authorization) {
+                    $authorization = $this->lockUsableAuthorization($authorization, $shift->id);
+
+                    // Another request consumed it while we waited for the lock.
+                    if ($authorization->status === AuthorizationStatus::CONSUMED) {
+                        return $authorization->transaction()->with('customer')->firstOrFail();
+                    }
                 }
 
                 // Re-read the balance under a row lock so two tellers serving the same
@@ -129,6 +167,22 @@ class TransactionService
                     'idempotency_key' => $idempotencyKey,
                 ]);
 
+                if ($authorization) {
+                    // Compare-and-set: exactly one request can move it from approved to consumed.
+                    $consumed = WithdrawalAuthorization::whereKey($authorization->id)
+                        ->where('status', AuthorizationStatus::APPROVED)
+                        ->update([
+                            'status' => AuthorizationStatus::CONSUMED,
+                            'consumed_at' => now(),
+                            'transaction_id' => $transaction->id,
+                            'updated_at' => now(),
+                        ]);
+
+                    if ($consumed !== 1) {
+                        throw new AuthorizationNotUsableException('Permintaan penarikan ini sudah diproses.');
+                    }
+                }
+
                 $this->journals->record($transaction);
 
                 return $transaction->setRelation('customer', $customer);
@@ -156,6 +210,32 @@ class TransactionService
         }
 
         return $existing;
+    }
+
+    /**
+     * Lock the authorization and check it can be completed now, in this shift.
+     */
+    private function lockUsableAuthorization(WithdrawalAuthorization $authorization, int $shiftId): WithdrawalAuthorization
+    {
+        $authorization = WithdrawalAuthorization::whereKey($authorization->id)->lockForUpdate()->firstOrFail();
+
+        if ($authorization->status === AuthorizationStatus::CONSUMED) {
+            return $authorization;
+        }
+
+        if ($authorization->status !== AuthorizationStatus::APPROVED) {
+            throw AuthorizationNotUsableException::status($authorization);
+        }
+
+        if ($authorization->approval_expires_at->lte(now())) {
+            throw new AuthorizationNotUsableException('Persetujuan nasabah sudah kedaluwarsa. Buat permintaan penarikan baru.', $authorization);
+        }
+
+        if ($authorization->daily_report_id !== $shiftId) {
+            throw new AuthorizationNotUsableException('Permintaan penarikan ini dibuat pada shift lain.', $authorization);
+        }
+
+        return $authorization;
     }
 
     private function ensureCorrectable(Transaction $original, User $teller): void

@@ -86,6 +86,14 @@ class Transaction extends Model
         return $this->belongsTo(User::class, 'authorized_by');
     }
 
+    /**
+     * For a withdrawal approved in the mobile app: the customer's authorization.
+     */
+    public function withdrawalAuthorization()
+    {
+        return $this->hasOne(WithdrawalAuthorization::class);
+    }
+
     public function accountingJournals()
     {
         return $this->hasMany(AccountingJournal::class);

@@ -17,8 +17,9 @@ Related documents: [RBAC.md](RBAC.md), [AUTH.md](AUTH.md),
 
 A school "mini bank" where students (nasabah) keep savings. All money moves
 through a teller at the counter: the teller records cash deposits and cash
-withdrawals. Students never move money themselves; they can only view their own
-account.
+withdrawals. Students never move money themselves; they can view their own
+account and **approve (with their PIN) or reject a withdrawal the teller started** for
+them (see §15.5 and [PIN_VERIFICATION.md](PIN_VERIFICATION.md)).
 
 The backend is a JSON REST API (Laravel 13, Sanctum bearer tokens, MariaDB). It
 also produces printable PDFs (receipts, daily reports, statements, accounting
@@ -82,7 +83,7 @@ Details in [AUTH.md](AUTH.md).
 | `admin` | `users.role` | Web | Manages staff, customer accounts, settings; reads audit data and reports. Never handles money. |
 | `supervisor` | `users.role` | Web | Reviews tellers' daily reports, sees the vault ledger, reads staff, accounts, audit data and reports. Never handles money. |
 | `teller` | `users.role` | Web | Runs a shift, looks up customers, records deposits/withdrawals/corrections, closes the shift, prints receipts and daily reports. |
-| Nasabah (customer) | `customers` table (separate model, not a role value) | Mobile | Views own balance, statement and card; changes own PIN. |
+| Nasabah (customer) | `customers` table (separate model, not a role value) | Mobile | Views own balance, statement and card; changes own PIN; approves or rejects withdrawals the teller started. |
 
 Full permission matrix and rules: [RBAC.md](RBAC.md). The frontend should route by
 `actor` and then by `user.role`, but **hiding pages is not security**; the backend
@@ -103,7 +104,8 @@ re-checks every request.
 | Shift | `GET /teller/shift`, `POST /teller/shift/open`, `POST /teller/shift/close` | teller |
 | Shift history / print | `GET /teller/daily-reports`, `GET /teller/daily-reports/{id}`, `GET /teller/daily-reports/{id}/export` | teller (own) |
 | Customer lookup (QR or typed) | `GET /teller/customers/lookup?identifier=` | teller |
-| Deposit / withdrawal | `POST /teller/deposits`, `POST /teller/withdrawals` | teller |
+| Deposit / withdrawal (PIN at terminal, if enabled) | `POST /teller/deposits`, `POST /teller/withdrawals` | teller |
+| Withdrawal with mobile approval (default) | `POST /teller/withdrawal-authorizations`, `GET /teller/withdrawal-authorizations[/{id}]`, `POST .../{id}/cancel`, `POST .../{id}/complete` | teller |
 | Today's transactions / receipt | `GET /teller/transactions?date=`, `GET /teller/transactions/{id}/receipt` | teller (own) |
 | Correction | `POST /teller/transactions/{id}/correct` | teller (own) + supervisor credentials |
 | Report review | `GET /supervisor/daily-reports`, `GET /supervisor/daily-reports/{id}`, `POST .../approve`, `.../hold`, `.../reject`, `GET .../export` | supervisor |
@@ -111,8 +113,9 @@ re-checks every request.
 | Audit log / journal / trial balance / exports | `GET /audit/transactions`, `GET /audit/transactions/{id}`, `GET /audit/transactions/export`, `GET /audit/journals`, `GET /audit/journals/summary`, `GET /audit/journals/export` | admin, supervisor |
 | Annual report PDF | `GET /reports/annual?school_year=` | admin, supervisor |
 | Mobile: balance, history, card, PIN, statement PDF | `GET /customer/balance`, `GET /customer/transactions`, `GET /customer/transactions/{id}`, `GET /customer/card`, `POST /customer/pin`, `GET /customer/statement/export` | customer |
+| Mobile: approve/reject a withdrawal | `GET /customer/withdrawal-authorizations[/{id}]`, `POST .../{id}/approve` `{pin}`, `POST .../{id}/reject` | customer |
 
-All 58 API routes are listed in [RBAC.md](RBAC.md#7-endpoint-restrictions).
+All 67 API routes are listed in [RBAC.md](RBAC.md#7-endpoint-restrictions).
 
 ## 7. Request requirements
 
@@ -189,7 +192,8 @@ Business `422` responses with extra fields:
 | Case | Extra fields |
 | --- | --- |
 | Cash mismatch on shift close | `system_balance`, `physical_balance`, `difference` |
-| Wrong/locked withdrawal PIN or PIN change | `remaining_attempts`, `pin_locked_until` (UTC ISO or null) |
+| Wrong/locked PIN on approval, terminal withdrawal or PIN change | `remaining_attempts`, `pin_locked_until` (UTC ISO or null) |
+| Withdrawal request not usable in its current state | `status` (e.g. `expired`, `cancelled`, `consumed`) |
 
 Language: business messages are Indonesian; Laravel field-validation messages are
 English (`"The amount field must be at least 1."`). Consider mapping field errors to
@@ -200,7 +204,9 @@ your own Indonesian texts.
 | Operation | Why it is sensitive | Frontend handling |
 | --- | --- | --- |
 | Deposit / withdrawal / correction | Moves money; a retry after a timeout could record twice | Generate an `Idempotency-Key` (e.g. UUID) when the confirmation dialog opens; reuse it for retries of that same submission; disable the submit button while pending. `201` = recorded, `200` = already recorded earlier (replay) |
-| Withdrawal | Wrong PIN attempts are counted even if the request fails for another reason (L2) | Check the shift and the customer's status, balance and `pin_locked_until` **before** asking for the PIN |
+| Withdrawal (terminal mode) | Wrong PIN attempts are counted even if the request fails for another reason (L2) | Check the shift and the customer's status, balance and `pin_locked_until` **before** asking for the PIN |
+| Withdrawal request: complete | Moves money | Safe to retry: the same `complete` call returns the same transaction (`200`). Disable the button while pending |
+| Withdrawal request: approve (mobile) | Uses a PIN attempt | Disable the button while pending; clear the PIN after each attempt |
 | Shift close | Saves nothing on mismatch; on success the shift locks | Show the system balance and the counted total before submitting; on `422` show the difference |
 | Supervisor approve | Final; creates the vault transfer | Confirmation dialog |
 | Customer deactivate (graduate) | Revokes tokens, hides the account; no undo endpoint (L5) | Strong confirmation; warn if balance > 0 |
@@ -275,6 +281,10 @@ USER ACTION   Enters username+password (web) or NIS/account number+PIN (mobile)
 → UI          Store token; route by actor (and user.role); show field error on 422
 ```
 
+Customer login counts wrong PINs toward the shared PIN lock (3 wrong → 15 minutes) but
+only says "NIS/nomor rekening atau PIN salah." until the account is locked; then the
+message contains the unlock time.
+
 The web app should refuse `actor: "customer"` (and the mobile app `actor: "staff"`)
 and tell the user to use the other app.
 
@@ -326,16 +336,54 @@ Confirmation dialog should show account number, name, amount and amount in words
 
 ### 15.5 Withdrawal
 
+Two ways, chosen by the `withdrawal_verification` setting (`GET /api/settings`):
+`mobile` (default) → **A**; `terminal` → **B**; `both` → offer both (e.g. B as the
+fallback for a customer without a phone).
+
+**A. Customer approves in the mobile app (default)**
+
+```text
+TELLER        Enters amount → "Kirim ke aplikasi nasabah"
+→ ENDPOINT    POST /api/teller/withdrawal-authorizations {"account_number":"RPL-2026-001","amount":30000}
+→ RESPONSE    201 {data:{id, status:"pending", expires_at, server_time, customer, ...}} ·
+              422 open request exists / PIN locked / balance / shift / status / mode disabled
+→ UI          Waiting screen: amount, customer, countdown (expires_at − server_time), "Batalkan"
+              Poll GET /api/teller/withdrawal-authorizations/{id} every 2 s
+              On a reload: GET /api/teller/withdrawal-authorizations?status=open to resume
+
+CUSTOMER      Opens the app (or is already on the "Persetujuan" screen)
+→ ENDPOINT    GET /api/customer/withdrawal-authorizations   (poll every 3–5 s while visible)
+→ UI          Card: amount + terbilang, teller name, balance → balance after, countdown;
+              buttons "Tolak" and "Setujui" → masked 6-digit PIN pad
+→ ENDPOINT    POST /api/customer/withdrawal-authorizations/{id}/approve {"pin":"......"}
+→ RESPONSE    200 status "approved" · 422 wrong PIN (remaining_attempts; request stays pending) ·
+              422 locked (pin_locked_until) · 422 with status (expired/cancelled/...)
+              or POST .../{id}/reject → 200 status "rejected"
+
+TELLER        Poll shows "approved" (countdown to approval_expires_at) → "Selesaikan penarikan"
+→ ENDPOINT    POST /api/teller/withdrawal-authorizations/{id}/complete
+→ RESPONSE    201 Transaction (withdrawal_authorization.method = "mobile") · 200 same transaction on retry ·
+              422 approval expired / shift / balance
+→ UI          Hand over cash, print the receipt. On rejected / expired / cancelled: show it
+              and allow a new request
+```
+
+The teller's screen never shows a PIN field in this mode. Only one open request per
+teller and per customer: cancel the old one before starting another.
+
+**B. PIN typed at the teller terminal (`terminal` / `both`)**
+
 ```text
 USER ACTION   Enters amount; customer types PIN on the confirmation screen
 → ENDPOINT    POST /api/teller/withdrawals  (header Idempotency-Key)
 → REQUEST     {"account_number":"RPL-2026-001","amount":30000,"pin":"123456"}
-→ VALIDATION  as deposit + pin 6 digits; PIN correct & not locked (checked first); shift; status;
-              balance − amount ≥ min_balance
+→ VALIDATION  mode allows terminal; as deposit + pin 6 digits; PIN correct & not locked (checked first);
+              shift; status; balance − amount ≥ min_balance
 → RESPONSE    201 Transaction · 200 replay ·
               422 {"message":"PIN salah. Sisa percobaan: 2.","remaining_attempts":2,"pin_locked_until":null} ·
               422 locked (remaining_attempts 0, pin_locked_until) ·
-              422 "Saldo tidak mencukupi ... penarikan maksimal RpX."
+              422 "Saldo tidak mencukupi ... penarikan maksimal RpX." ·
+              422 "Penarikan harus disetujui nasabah melalui aplikasi..." (mode is mobile)
 → UI          Pre-check balance − amount ≥ min_balance (from GET /settings) before asking for the PIN;
               mask the PIN input; clear it after every attempt; show remaining attempts / lock time
 ```
@@ -388,15 +436,19 @@ USER ACTION   Opens the app after login
               statement lines {id, type, direction, description, amount, balance_after, created_at}
 → UI          Balance card; "suspended" notice when account_status = suspended; latest lines;
               infinite scroll on the history screen (page/per_page); pull to refresh;
-              digital card shows qr_payload as a QR code for the teller to scan
+              digital card shows qr_payload as a QR code for the teller to scan;
+              while the app is in the foreground, poll GET /api/customer/withdrawal-authorizations
+              and show a pending request prominently (see §15.5 A)
 ```
 
 ## 16. Pagination, filtering, sorting
 
 - Paginated endpoints: `GET /staff`, `/customers`, `/teller/transactions`,
   `/teller/daily-reports`, `/supervisor/daily-reports`, `/supervisor/cash-transfers`,
-  `/audit/transactions`, `/audit/journals`, `/customer/transactions`.
-- Not paginated: `GET /majors`, shift/report `transactions` arrays.
+  `/audit/transactions`, `/audit/journals`, `/customer/transactions`,
+  `/teller/withdrawal-authorizations`.
+- Not paginated: `GET /majors`, shift/report `transactions` arrays,
+  `GET /customer/withdrawal-authorizations`.
 - `?page=` (1-based) and `?per_page=` (default 15; teller transactions 50; journals
   30; customer transactions 20; clamped to 1–100).
 - **No sorting parameters exist.** Fixed orders: staff and customers by name;
@@ -428,7 +480,7 @@ These are current behaviors. They are documented, not fixed.
 | # | Limitation | Frontend impact |
 | --- | --- | --- |
 | L1 | Amounts are not required to be multiples of 100, but cash can only be counted in denominations ≥ Rp100. Any amount like Rp150 makes the shift impossible to close until that transaction is corrected (verified). | Enforce multiples of 100 in the teller UI |
-| L2 | Withdrawal checks the PIN **before** the shift, account status and balance. A wrong PIN is counted even when the withdrawal would have failed anyway. | Pre-check shift (`can_transact`), status, balance and lock before asking for the PIN |
+| L2 | Terminal withdrawal (mode B) checks the PIN **before** the shift, account status and balance. A wrong PIN is counted even when the withdrawal would have failed anyway. Mobile approval is pre-checked at request creation. | In mode B, pre-check shift (`can_transact`), status, balance and lock before asking for the PIN |
 | L3 | After a rejection, the reopened shift still shows the previous `physical_balance`, `difference` and `closing_counts` until it is closed again (verified). | For `status = rejected`, ignore those fields or label them "previous count" |
 | L4 | CORS exposes no response headers, so a browser app on another origin cannot read `Idempotent-Replayed` or `Content-Disposition`. | Use status `201` vs `200` to detect replays; name downloaded PDFs yourself; or serve the web app same-origin / via a dev proxy |
 | L5 | Graduating (deactivating) an account does not require a zero balance, cannot be undone via the API, and closed accounts cannot be transacted. With a minimum balance > 0 the last Rp10.000 can never be withdrawn. | Warn before deactivation when balance > 0 |
@@ -443,7 +495,9 @@ These are current behaviors. They are documented, not fixed.
 | L14 | The teller's read access to accounts is a single-customer lookup; there is no account list for tellers. | No account browsing for tellers |
 | L15 | `customers.balance` is a 32-bit integer (max Rp2.147.483.647). | Not a practical concern for a school |
 | L16 | Idempotency keys never expire; reusing an old key for a new transaction returns `422`. | Always generate a fresh key per new transaction |
-| L17 | The QR payload is the plain account number (not signed); it identifies but does not authorize. Withdrawals still need the PIN. | Always ask for the PIN on withdrawals |
+| L17 | The QR payload is the plain account number (not signed); it identifies but does not authorize. Withdrawals still need the customer's PIN (in the app or at the terminal). | Never treat a scan as authorization |
+| L19 | Withdrawal requests are delivered by polling; there are no push notifications. The customer must have the app open (or refresh) to see a request. | Tell the customer to open the "Persetujuan" screen; poll while visible |
+| L20 | Any device where the customer is logged in can approve a request (tokens have no abilities). | Optionally ask for device biometrics before showing the approval PIN pad |
 | L18 | No sort parameters on any list; orders are fixed per endpoint (see §16). | Sort client-side within a page only, or accept the server order |
 
 ## 19. Known inconsistencies or unclear behavior
@@ -452,7 +506,7 @@ These are current behaviors. They are documented, not fixed.
 | --- | --- | --- |
 | I1 | The UKK soal's RBAC matrix gives Admin no access to "input transaksi" and read access to the journal. The backend also lets Admin read the transaction log (`/audit/transactions*`). Reading is not input, but a strict reading of the matrix could disagree. | Implemented as described; decide whether the admin UI shows the log |
 | I2 | `POST /staff/login` and `POST /customer/login` duplicate `POST /login`. | Use `/login` only |
-| I3 | The customer login message `Rekening ini sudah tidak aktif.` can practically never appear: `inactive` is only set by deactivation, which also soft-deletes, and soft-deleted accounts get the generic "wrong NIS/PIN" message. | Treat both as login failure |
+| I3 | The customer login message `Rekening ini sudah tidak aktif.` (shown only after a correct PIN) can practically never appear: `inactive` is only set by deactivation, which also soft-deletes, and soft-deleted accounts get the generic "wrong NIS/PIN" message. | Treat both as login failure |
 | I4 | `docs/API.md` described `physical_balance`/`difference` as null while a shift is open, which is wrong for rejected shifts (L3). | Corrected in API.md |
 | I5 | `docs/API.md`'s access matrix showed Admin with no access in the deposit/withdrawal row although Admin can read the audit log. | Corrected in API.md |
 | I6 | The UKK interview asked for Customer Service / Accounting roles and student vs employee savings products; the backend implements the soal's four roles and one savings product (account 201). | Not implemented; do not build UI for them |
@@ -460,7 +514,8 @@ These are current behaviors. They are documented, not fixed.
 ## 20. Not implemented (do not build UI for these)
 
 Customer self-registration · customer-initiated transactions or transfers between
-accounts · loans, term deposits, fees · notifications/push · password or PIN
+accounts (customers only approve teller-started withdrawals) · loans, term deposits,
+fees · notifications/push (use polling) · approval in the app for deposits or corrections · password or PIN
 "forgot" flows · staff self-service profile/password · restoring graduated accounts ·
 major management · multi-role users · attendance (absensi) integration · bulk
 approval of reports · editing or deleting transactions · JSON annual report ·

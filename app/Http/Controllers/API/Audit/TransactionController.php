@@ -34,7 +34,7 @@ class TransactionController extends Controller
 
     public function show(Transaction $transaction): TransactionResource
     {
-        return new TransactionResource($transaction->load(['customer', 'teller', 'accountingJournals', 'corrects', 'correction', 'authorizer']));
+        return new TransactionResource($transaction->load(['customer', 'teller', 'accountingJournals', 'corrects', 'correction', 'authorizer', 'withdrawalAuthorization']));
     }
 
     /**

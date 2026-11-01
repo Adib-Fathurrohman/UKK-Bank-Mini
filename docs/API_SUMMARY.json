@@ -1,7 +1,7 @@
 {
   "name": "E-Teller Bank Mini API",
   "source_of_truth": "Laravel backend implementation (routes, form requests, controllers, services, resources). This file is a generated index; see docs/API.md for examples.",
-  "generated_from_commit": "5ddbd69",
+  "generated_from_commit": "c405986-dirty",
   "base_url": "{APP_URL}/api (UNKNOWN for deployments; local default http://localhost:8000/api)",
   "conventions": {
     "headers": {
@@ -94,9 +94,22 @@
       "2",
       "3",
       "4"
+    ],
+    "withdrawal_verification": [
+      "mobile",
+      "terminal",
+      "both"
+    ],
+    "withdrawal_authorization_status": [
+      "pending",
+      "approved",
+      "consumed",
+      "rejected",
+      "cancelled",
+      "expired"
     ]
   },
-  "route_count": 58,
+  "route_count": 67,
   "endpoints": [
     {
       "method": "POST",
@@ -270,11 +283,16 @@
             "type": "string",
             "required": false,
             "rules": "webcam|usb|disabled"
+          },
+          "withdrawal_verification": {
+            "type": "string",
+            "required": false,
+            "rules": "mobile|terminal|both"
           }
         },
         "content_type": "application/json"
       },
-      "response": "200 {data:{min_balance, qr_scanner_mode}}",
+      "response": "200 {data:{min_balance, qr_scanner_mode, withdrawal_verification}}",
       "errors": [
         "422 validation"
       ]
@@ -361,27 +379,6 @@
       ]
     },
     {
-      "method": "DELETE",
-      "path": "/api/admin/staff/{staff}",
-      "auth": "bearer",
-      "actor": "staff",
-      "roles": [
-        "admin"
-      ],
-      "purpose": "Permanently delete a staff account that has no history.",
-      "request": {
-        "path_params": {
-          "staff": "integer id"
-        }
-      },
-      "response": "200 {message:'Akun staf dihapus.'}",
-      "errors": [
-        "409 staff has transactions/reports/approvals (block instead)",
-        "403 admin target",
-        "404"
-      ]
-    },
-    {
       "method": [
         "PUT",
         "PATCH"
@@ -436,6 +433,27 @@
         "403 'Akun administrator tidak dapat diubah melalui API.' for admin targets",
         "404",
         "422"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/staff/{staff}",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin"
+      ],
+      "purpose": "Permanently delete a staff account that has no history.",
+      "request": {
+        "path_params": {
+          "staff": "integer id"
+        }
+      },
+      "response": "200 {message:'Akun staf dihapus.'}",
+      "errors": [
+        "409 staff has transactions/reports/approvals (block instead)",
+        "403 admin target",
+        "404"
       ]
     },
     {
@@ -644,7 +662,7 @@
           "transaction": "integer id"
         }
       },
-      "response": "200 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?} incl. journals}",
+      "response": "200 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, withdrawal_authorization?, customer{id,account_number,full_name}, teller?, journals?} incl. journals; withdrawal_authorization {id, method:'mobile', approved_at} for withdrawals approved in the mobile app}",
       "errors": [
         "404"
       ]
@@ -700,9 +718,10 @@
         },
         "content_type": "application/json"
       },
-      "response": "200 {data:{actor:'staff'|'customer', token, token_type:'Bearer', user: Staff | customer: Customer}}",
+      "response": "200 {data:{actor:'customer', token, token_type:'Bearer', customer: Customer}}",
       "errors": [
-        "422",
+        "422 wrong NIS/account number or PIN",
+        "422 PIN locked: 'Terlalu banyak percobaan PIN salah. Coba lagi pukul HH:MM.' (shared lock; remaining attempts are not revealed before the lock)",
         "429"
       ]
     },
@@ -747,7 +766,7 @@
           "current_pin": {
             "type": "string",
             "required": true,
-            "rules": "exactly 6 digits; wrong values count toward the PIN lock"
+            "rules": "exactly 6 digits; wrong values count toward the shared PIN lock"
           },
           "new_pin": {
             "type": "string",
@@ -836,6 +855,105 @@
       "response": "200 {data: StatementLine}",
       "errors": [
         "404 not own"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/customer/withdrawal-authorizations",
+      "auth": "bearer",
+      "actor": "customer",
+      "roles": [
+        "customer"
+      ],
+      "purpose": "The customer's own open withdrawal requests (pending or approved), not paginated. Poll while the app is open.",
+      "rate_limit": [
+        "120 per minute per actor (teller or customer)"
+      ],
+      "ownership": "scoped to the authenticated customer",
+      "request": {},
+      "response": "200 {data: [CustomerWithdrawalAuthorization {id (ULID), status, status_label, amount, amount_in_words, account_number, balance, balance_after (null once not open), teller{full_name}, created_at, expires_at, approved_at, approval_expires_at, consumed_at, server_time}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/customer/withdrawal-authorizations/{withdrawalAuthorization}",
+      "auth": "bearer",
+      "actor": "customer",
+      "roles": [
+        "customer"
+      ],
+      "purpose": "One own withdrawal request in any status.",
+      "rate_limit": [
+        "120 per minute per actor (teller or customer)"
+      ],
+      "ownership": "own requests only (customer_id); others return 404",
+      "request": {
+        "path_params": {
+          "withdrawalAuthorization": "ULID (data.id of the request)"
+        }
+      },
+      "response": "200 {data: CustomerWithdrawalAuthorization {id (ULID), status, status_label, amount, amount_in_words, account_number, balance, balance_after (null once not open), teller{full_name}, created_at, expires_at, approved_at, approval_expires_at, consumed_at, server_time}}",
+      "errors": [
+        "404"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/customer/withdrawal-authorizations/{withdrawalAuthorization}/approve",
+      "auth": "bearer",
+      "actor": "customer",
+      "roles": [
+        "customer"
+      ],
+      "purpose": "Approve a pending request with the customer's PIN (pending -> approved, approval valid 120 s). The PIN is never stored or returned.",
+      "rate_limit": [
+        "5 per minute per customer"
+      ],
+      "ownership": "own requests only (customer_id); others return 404",
+      "request": {
+        "path_params": {
+          "withdrawalAuthorization": "ULID (data.id of the request)"
+        },
+        "body": {
+          "pin": {
+            "type": "string",
+            "required": true,
+            "rules": "exactly 6 digits; shared PIN lock (3 wrong in a row lock 15 minutes)"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data: CustomerWithdrawalAuthorization {id (ULID), status, status_label, amount, amount_in_words, account_number, balance, balance_after (null once not open), teller{full_name}, created_at, expires_at, approved_at, approval_expires_at, consumed_at, server_time}} with status 'approved'",
+      "errors": [
+        "422 validation",
+        "422 wrong PIN {message, remaining_attempts, pin_locked_until} (request stays pending)",
+        "422 PIN locked",
+        "422 not usable in the current status {message, status}",
+        "422 account not active",
+        "404"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/customer/withdrawal-authorizations/{withdrawalAuthorization}/reject",
+      "auth": "bearer",
+      "actor": "customer",
+      "roles": [
+        "customer"
+      ],
+      "purpose": "Reject a pending request (pending -> rejected).",
+      "rate_limit": [
+        "5 per minute per customer"
+      ],
+      "ownership": "own requests only (customer_id); others return 404",
+      "request": {
+        "path_params": {
+          "withdrawalAuthorization": "ULID (data.id of the request)"
+        }
+      },
+      "response": "200 {data: CustomerWithdrawalAuthorization {id (ULID), status, status_label, amount, amount_in_words, account_number, balance, balance_after (null once not open), teller{full_name}, created_at, expires_at, approved_at, approval_expires_at, consumed_at, server_time}} with status 'rejected'",
+      "errors": [
+        "404",
+        "422 not usable in the current status {message, status}"
       ]
     },
     {
@@ -949,9 +1067,10 @@
       "response": "200 {data:{actor:'staff'|'customer', token, token_type:'Bearer', user: Staff | customer: Customer}}",
       "errors": [
         "422 wrong credentials / blocked staff / closed account / missing fields",
+        "422 PIN locked: 'Terlalu banyak percobaan PIN salah. Coba lagi pukul HH:MM.' (shared lock; remaining attempts are not revealed before the lock)",
         "429 more than 5 attempts per minute per identifier+IP"
       ],
-      "notes": "If username is filled the staff login runs; else if identifier is filled the customer login runs; else 422 on username."
+      "notes": "If username is filled the staff login runs; else if identifier is filled the customer login runs; else 422 on username. Customer PINs are checked through the shared PIN lock (3 wrong in a row lock login, withdrawal approval and PIN change for 15 minutes)."
     },
     {
       "method": "GET",
@@ -1003,7 +1122,7 @@
       ],
       "purpose": "Read global settings.",
       "request": {},
-      "response": "200 {data:{min_balance:int, qr_scanner_mode:'webcam'|'usb'|'disabled'}}"
+      "response": "200 {data:{min_balance:int, qr_scanner_mode:'webcam'|'usb'|'disabled', withdrawal_verification:'mobile'|'terminal'|'both'}}"
     },
     {
       "method": "GET",
@@ -1596,13 +1715,161 @@
     },
     {
       "method": "POST",
+      "path": "/api/teller/withdrawal-authorizations",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "teller"
+      ],
+      "purpose": "Start a withdrawal that the customer approves with their PIN in the mobile app (mode A). No money moves. Only when withdrawal_verification is mobile or both.",
+      "rate_limit": [
+        "10 per minute per teller"
+      ],
+      "request": {
+        "body": {
+          "account_number": {
+            "type": "string",
+            "required": true,
+            "rules": "exists in customers and not closed"
+          },
+          "amount": {
+            "type": "integer",
+            "required": true,
+            "rules": "integer 1-100000000; balance - amount >= min_balance setting"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 {data: WithdrawalAuthorization {id (ULID), status, status_label, amount, amount_in_words, customer{id,account_number,full_name,class}, daily_report_id, created_at, expires_at, approved_at, approval_expires_at, rejected_at, cancelled_at, cancel_reason, consumed_at, transaction_id, server_time}} with status 'pending' and expires_at = now + 120 s",
+      "errors": [
+        "422 validation",
+        "422 mode disabled",
+        "422 this teller already has an open request",
+        "422 the customer already has an open request",
+        "422 PIN locked {remaining_attempts:0, pin_locked_until}",
+        "422 insufficient balance (minimum balance)",
+        "422 no shift / shift closed / earlier shift still open",
+        "422 account not active"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/teller/withdrawal-authorizations",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "teller"
+      ],
+      "purpose": "The teller's own withdrawal requests created today, newest first; ?status=open returns only the open one (to resume after a reload).",
+      "rate_limit": [
+        "120 per minute per actor (teller or customer)"
+      ],
+      "ownership": "own requests only (teller_id); others return 404",
+      "request": {
+        "query": {
+          "status": {
+            "required": false,
+            "rules": "open"
+          },
+          "page": {
+            "required": false,
+            "rules": "integer"
+          },
+          "per_page": {
+            "required": false,
+            "rules": "1-100, default 15"
+          }
+        }
+      },
+      "response": "200 paginated {data: [WithdrawalAuthorization {id (ULID), status, status_label, amount, amount_in_words, customer{id,account_number,full_name,class}, daily_report_id, created_at, expires_at, approved_at, approval_expires_at, rejected_at, cancelled_at, cancel_reason, consumed_at, transaction_id, server_time}], links, meta}",
+      "errors": [
+        "422 invalid status filter"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/teller/withdrawal-authorizations/{withdrawalAuthorization}",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "teller"
+      ],
+      "purpose": "Current status of one request, for polling (expiry is applied on read).",
+      "rate_limit": [
+        "120 per minute per actor (teller or customer)"
+      ],
+      "ownership": "own requests only (teller_id); others return 404",
+      "request": {
+        "path_params": {
+          "withdrawalAuthorization": "ULID (data.id of the request)"
+        }
+      },
+      "response": "200 {data: WithdrawalAuthorization {id (ULID), status, status_label, amount, amount_in_words, customer{id,account_number,full_name,class}, daily_report_id, created_at, expires_at, approved_at, approval_expires_at, rejected_at, cancelled_at, cancel_reason, consumed_at, transaction_id, server_time}}",
+      "errors": [
+        "404"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/teller/withdrawal-authorizations/{withdrawalAuthorization}/cancel",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "teller"
+      ],
+      "purpose": "Cancel a pending or approved request (cancel_reason 'teller').",
+      "rate_limit": [
+        "120 per minute per actor (teller or customer)"
+      ],
+      "ownership": "own requests only (teller_id); others return 404",
+      "request": {
+        "path_params": {
+          "withdrawalAuthorization": "ULID (data.id of the request)"
+        }
+      },
+      "response": "200 {data: WithdrawalAuthorization {id (ULID), status, status_label, amount, amount_in_words, customer{id,account_number,full_name,class}, daily_report_id, created_at, expires_at, approved_at, approval_expires_at, rejected_at, cancelled_at, cancel_reason, consumed_at, transaction_id, server_time}} with status 'cancelled'",
+      "errors": [
+        "404",
+        "422 not usable in the current status {message, status}"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/teller/withdrawal-authorizations/{withdrawalAuthorization}/complete",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "teller"
+      ],
+      "purpose": "Execute an approved request: record the withdrawal for the account and amount stored in the request, mark it consumed, write the journal, all in one DB transaction. Safe to retry.",
+      "rate_limit": [
+        "120 per minute per actor (teller or customer)"
+      ],
+      "ownership": "own requests only (teller_id); others return 404",
+      "request": {
+        "path_params": {
+          "withdrawalAuthorization": "ULID (data.id of the request)"
+        }
+      },
+      "response": "201 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, withdrawal_authorization?, customer{id,account_number,full_name}, teller?, journals?}} with withdrawal_authorization {id, method:'mobile', approved_at}; 200 with the same transaction if called again",
+      "errors": [
+        "404",
+        "422 not usable in the current status {message, status} (e.g. still pending)",
+        "422 approval expired",
+        "422 request belongs to another shift / no open shift",
+        "422 insufficient balance (minimum balance)",
+        "422 account not active"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/api/teller/withdrawals",
       "auth": "bearer",
       "actor": "staff",
       "roles": [
         "teller"
       ],
-      "purpose": "Record a cash withdrawal authorized by the customer's PIN.",
+      "purpose": "Record a cash withdrawal with the customer's PIN typed at the teller terminal (mode B). Only when the withdrawal_verification setting is terminal or both.",
       "request": {
         "headers": {
           "Idempotency-Key": {
@@ -1625,13 +1892,14 @@
           "pin": {
             "type": "string",
             "required": true,
-            "rules": "exactly 6 digits; checked before shift/status/balance; 3 wrong in a row lock 15 minutes"
+            "rules": "exactly 6 digits; checked before shift/status/balance; 3 wrong in a row lock the PIN for 15 minutes (shared with login and mobile approval)"
           }
         },
         "content_type": "application/json"
       },
       "response": "201 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?}}; 200 on idempotent replay (PIN not re-checked)",
       "errors": [
+        "422 withdrawal_verification is mobile: 'Penarikan harus disetujui nasabah melalui aplikasi. ...'",
         "422 wrong PIN {message, remaining_attempts, pin_locked_until}",
         "422 PIN locked",
         "422 insufficient balance (minimum balance)",

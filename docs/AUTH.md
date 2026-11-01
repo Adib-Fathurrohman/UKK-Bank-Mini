@@ -58,7 +58,8 @@ For customers `actor` is `"customer"` and the profile is in `data.customer` (see
 | --- | --- |
 | `Username atau password salah.` | Unknown username or wrong password |
 | `Akun staf ini sudah dinonaktifkan.` | Correct password but blocked staff |
-| `NIS/nomor rekening atau PIN salah.` | Unknown identifier, wrong PIN, or closed (soft-deleted) account |
+| `NIS/nomor rekening atau PIN salah.` | Unknown identifier, wrong PIN, or closed (soft-deleted) account. The remaining attempts are not revealed |
+| `Terlalu banyak percobaan PIN salah. Coba lagi pukul HH:MM.` | The PIN is locked (3 wrong PINs in a row, at login or anywhere else); shown from the 3rd wrong attempt until the lock ends. Local time |
 | `Rekening ini sudah tidak aktif.` | `inactive` account that is not soft-deleted (not reachable through API flows) |
 | `Isi username dan password (staf) atau NIS/nomor rekening dan PIN (nasabah).` | Neither credential set sent |
 | Laravel field messages | Missing fields, PIN not 6 digits |
@@ -67,9 +68,11 @@ For customers `actor` is `"customer"` and the profile is in `data.customer` (see
 The 6th returns `429 {"message":"Too Many Attempts."}`. Suspended customers **can**
 log in.
 
-Note: the customer login PIN check does **not** use the withdrawal PIN lock counter;
-only the per-minute rate limit applies. Wrong PINs at the counter and in
-`POST /customer/pin` do use the lock (see [WORKFLOWS.md](WORKFLOWS.md)).
+**PIN lock:** the customer login checks the PIN through the same counter as withdrawal
+approval, terminal withdrawals and `POST /customer/pin`. Three wrong PINs in a row
+(anywhere) lock the PIN for 15 minutes; during the lock even the correct PIN is refused
+at login. NIS and account number lead to the same counter. The rate limit above applies
+on top. See [PIN_VERIFICATION.md](PIN_VERIFICATION.md#2-pin-storage-and-the-shared-lock).
 
 ## 3. Using the token
 
@@ -163,6 +166,8 @@ API routes never redirect; guests always get JSON `401`.
   [FRONTEND_HANDOFF.md](FRONTEND_HANDOFF.md#3-api-base-url-configuration)). Plain
   `http://` to a LAN IP may need cleartext traffic allowed in development builds on
   Android.
-- PIN input: numeric keypad, masked, 6 digits. Do not store the PIN.
+- PIN input: numeric keypad, masked, 6 digits. Do not store the PIN. The same rules
+  apply to the PIN pad used to approve a teller's withdrawal request.
+- On the login screen, show the lock message as returned (it contains the unlock time).
 - The login rate limit is per identifier + IP; several phones behind one school Wi-Fi
   share an IP but have different identifiers, so they do not block each other.
