@@ -35,4 +35,16 @@ return [
         ],
     ],
 
+    /*
+    | Firebase Authentication (customer app login). The service account JSON
+    | stays on the server: FIREBASE_CREDENTIALS is a path to it (relative to
+    | the project root, or absolute). Never commit that file.
+    */
+    'firebase' => [
+        'project_id' => env('FIREBASE_PROJECT_ID'),
+        'credentials' => env('FIREBASE_CREDENTIALS'),
+        // Sign-in providers accepted for customers ("password" = email/password).
+        'providers' => array_values(array_filter(array_map('trim', explode(',', env('FIREBASE_ALLOWED_PROVIDERS', 'password,google.com'))))),
+    ],
+
 ];

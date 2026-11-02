@@ -2,16 +2,25 @@
 
 namespace App\Services;
 
+use App\Contracts\FirebaseAuth;
 use App\Enums\AccountStatus;
+use App\Exceptions\CustomerAuthException;
 use App\Models\Customer;
 use App\Models\Major;
 use App\Support\SchoolYear;
 use Carbon\CarbonInterface;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class CustomerService
 {
+    public function __construct(
+        private FirebaseAuth $firebase,
+        private CustomerActivationService $activation,
+    ) {
+    }
+
     /**
      * Open a new savings account with a generated account number.
      */
@@ -34,16 +43,29 @@ class CustomerService
      * Close the account of a graduated student (FR-Rek-03).
      *
      * The row is kept (soft delete) so its transactions and journals stay intact.
+     * All app sessions and invitation links end.
      */
     public function deactivate(Customer $customer): Customer
     {
-        return DB::transaction(function () use ($customer) {
+        DB::transaction(function () use ($customer) {
             $customer->update(['account_status' => AccountStatus::INACTIVE]);
             $customer->tokens()->delete();
+            $this->activation->revokeOutstanding($customer);
             $customer->delete();
-
-            return $customer;
         });
+
+        // Also stop the Firebase account from getting new ID tokens. The backend
+        // refuses closed accounts anyway, so a Firebase outage must not undo
+        // or block the deactivation; it is logged for a manual follow-up.
+        if ($customer->firebase_uid) {
+            try {
+                $this->firebase->disableUser($customer->firebase_uid);
+            } catch (CustomerAuthException) {
+                Log::warning('Could not disable the Firebase user of a deactivated customer.', ['customer_id' => $customer->id]);
+            }
+        }
+
+        return $customer;
     }
 
     /**

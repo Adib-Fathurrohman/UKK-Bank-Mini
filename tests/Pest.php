@@ -8,7 +8,9 @@ use App\Models\User;
 use App\Services\DailyReportService;
 use App\Support\Cash;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use App\Contracts\FirebaseAuth;
 use Laravel\Sanctum\Sanctum;
+use Tests\Support\FakeFirebaseAuth;
 use Tests\TestCase;
 
 /*
@@ -102,4 +104,16 @@ function actingAsCustomer(array $attributes = []): Customer
     Sanctum::actingAs($customer);
 
     return $customer;
+}
+
+/**
+ * Replace Firebase Authentication with the in-memory fake for this test.
+ */
+function fakeFirebase(): FakeFirebaseAuth
+{
+    $fake = new FakeFirebaseAuth;
+
+    app()->instance(FirebaseAuth::class, $fake);
+
+    return $fake;
 }

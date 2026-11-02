@@ -22,6 +22,10 @@ class CustomerResource extends JsonResource
             'account_number' => $this->account_number,
             'nis' => $this->nis,
             'full_name' => $this->full_name,
+            'email' => $this->email,
+            // "pending" until the customer activates the app with a Firebase account.
+            'activation_status' => $this->isActivated() ? 'activated' : 'pending',
+            'activated_at' => $this->activated_at,
             'class' => $this->class,
             'group' => $this->group,
             'major' => $this->whenLoaded('major', fn () => [

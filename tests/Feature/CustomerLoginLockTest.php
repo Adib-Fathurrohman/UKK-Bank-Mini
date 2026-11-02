@@ -48,17 +48,18 @@ test('the third wrong PIN locks login for fifteen minutes', function () {
 
     $this->travelTo(Carbon::parse('2026-10-23 09:15:01'));
 
-    customerLogin('123456')->assertOk();
+    // The PIN is accepted again (the answer is "activate first": the PIN alone gives no session).
+    customerLogin('123456')->assertForbidden()->assertJsonPath('code', 'activation_required');
     expect($this->customer->fresh())
         ->pin_failed_attempts->toBe(0)
         ->pin_locked_until->toBeNull();
 });
 
-test('a successful login resets the wrong attempt counter', function () {
+test('a correct PIN at login resets the wrong attempt counter', function () {
     customerLogin('000000');
     customerLogin('000000');
 
-    customerLogin('123456')->assertOk();
+    customerLogin('123456')->assertForbidden()->assertJsonPath('code', 'activation_required');
 
     expect($this->customer->fresh()->pin_failed_attempts)->toBe(0);
 });

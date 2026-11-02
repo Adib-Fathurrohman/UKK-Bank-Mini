@@ -80,26 +80,33 @@ Common requirements for every page:
 ### Customer list
 - **Purpose:** browse accounts.
 - **Data / endpoints:** `GET /customers` with `search`, `major_id` (from
-  `GET /majors`), `class`, `group`, `status`, `trashed`.
+  `GET /majors`), `class`, `group`, `status`, `activation` (`pending`/`activated`),
+  `trashed`. Show `activation_status`.
 - **Actions:** open detail, create.
 
 ### Customer detail
 - **Data / endpoints:** `GET /customers/{id}` (closed accounts too). History via
   `GET /audit/transactions?customer_id={id}`. Statement PDF
   `GET /customers/{id}/statement?from=&to=`.
-- **Actions:** edit, reset PIN, suspend/activate, print card, deactivate.
-- **States:** closed account (`deleted_at` set): read-only.
+- **Actions:** edit, reset PIN, suspend/activate, print card, deactivate, resend the
+  activation invitation (`POST /admin/customers/{id}/invitation`, pending accounts with an
+  email).
+- **States:** closed account (`deleted_at` set): read-only; `activation_status`
+  pending/activated with `activated_at`; no email yet (ask to add one before inviting).
 
 ### Open account
-- **Endpoints:** `GET /majors`, `POST /admin/customers` (nis, full_name, class,
+- **Endpoints:** `GET /majors`, `POST /admin/customers` (nis, full_name, email, class,
   major_id, group, pin).
-- **States:** field errors; success shows the generated account number.
+- **States:** field errors (including a duplicate email); success shows the generated
+  account number and whether the invitation email was sent (`invitation.mail_sent`; if
+  `false`, offer "kirim ulang undangan").
 
 ### Edit account / reset PIN / suspend
-- **Endpoint:** `PATCH /admin/customers/{id}` (any of nis, full_name, class, major_id,
-  group, `account_status` active/suspended, pin).
+- **Endpoint:** `PATCH /admin/customers/{id}` (any of nis, full_name, email, class,
+  major_id, group, `account_status` active/suspended, pin).
 - **Notes:** a new PIN also clears a PIN lock; account number and balance are not
-  editable.
+  editable; the email is editable only while activation is pending (changing it cancels
+  earlier invitation links, so resend afterwards).
 
 ### Print customer card
 - **Endpoint:** `GET /admin/customers/{id}/card`.
@@ -264,12 +271,37 @@ Common requirements for every page:
 
 ## Mobile User (customer, React Native + Expo)
 
+Full client contract for these screens: [FRONTEND_HANDOFF.md §15.10](FRONTEND_HANDOFF.md#1510-customer-activation-login-unlock-and-password-firebase).
+
+### Activation (from the invitation email)
+- **Endpoints:** `POST /customer/activation/inspect` (`token` from the link), Firebase
+  sign-in (Google, or create a password for the registered email and verify it),
+  `POST /customer/activation/complete` (`token`, `id_token`).
+- **Data:** name, account number, registered email (read-only), link expiry.
+- **States:** invalid/used link, expired link (offer a new link via NIS + PIN →
+  `POST /customer/activation/resend`), waiting for email verification, wrong Google
+  account (`email_mismatch`), account already linked elsewhere, Firebase unavailable.
+
 ### Login
-- **Endpoint:** `POST /login` with `identifier` (NIS or account number) and `pin`
-  (6-digit numeric keypad).
-- **States:** field errors, wrong credentials, lock message with unlock time (3 wrong
-  PINs anywhere), `429`; refuse `actor: "staff"`.
-- **Storage:** token in `expo-secure-store`.
+- **Endpoints:** Firebase sign-in (Google or email/password), then
+  `POST /customer/auth/login` (`id_token`).
+- **States:** wrong email/password (one generic message), `account_not_linked`
+  (activate from the email; offer a new link), `email_not_verified`, `account_inactive`,
+  `503`, `429`; refuse `actor: "staff"`.
+- **Storage:** token and `expires_at` in `expo-secure-store`.
+- **Note:** NIS + PIN does not sign in. If offered as a hint, `POST /customer/login`
+  answers `activation_required` or `firebase_login_required`.
+
+### PIN unlock
+- **Endpoint:** `POST /customer/unlock` (`pin`, 6-digit numeric keypad).
+- **When:** app start or return from background while the session is valid.
+- **States:** wrong PIN with `remaining_attempts`; lock message with unlock time (3
+  wrong PINs anywhere); `401` → session over → Firebase sign-in.
+
+### Forgot / change password
+- **Functions:** Firebase `sendPasswordResetEmail` (always the same confirmation text);
+  change password with re-authentication then `updatePassword` (email/password accounts
+  only). No backend endpoint.
 
 ### Home / balance
 - **Endpoints:** `GET /customer/balance`, `GET /customer/transactions?per_page=5`.
@@ -318,14 +350,17 @@ Common requirements for every page:
 - **Function:** download and open/share with the platform viewer.
 
 ### Logout
-- **Endpoint:** `POST /customer/logout`; always delete the stored token.
+- **Endpoints:** `POST /customer/logout` (this device) or `POST /customer/logout-all`
+  (all devices); then Firebase sign-out; always delete the stored token.
 
 ---
 
 ## Not supported by the API (do not build)
 
 - Staff "change my password" or profile editing; any admin-account management.
-- Forgot password / forgot PIN.
+- Staff forgot password; forgot PIN (an administrator resets it). Customer passwords are
+  reset through Firebase in the app.
+- Customer self-registration (accounts come from the administrator and the invitation).
 - Customer-initiated transfers or payments; starting deposits/withdrawals from the
   mobile app (the app only approves or rejects a teller's withdrawal request).
 - Restoring closed accounts; major management.

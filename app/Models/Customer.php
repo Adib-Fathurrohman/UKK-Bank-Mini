@@ -26,6 +26,10 @@ class Customer extends Authenticatable
         'account_number',
         'nis',
         'full_name',
+        'email',
+        'firebase_uid',
+        'email_verified_at',
+        'activated_at',
         'class',
         'major_id',
         'group',
@@ -38,6 +42,7 @@ class Customer extends Authenticatable
 
     protected $hidden = [
         'pin',
+        'firebase_uid',
     ];
 
     protected function casts(): array
@@ -48,7 +53,19 @@ class Customer extends Authenticatable
             'pin_failed_attempts' => 'integer',
             'pin_locked_until' => 'datetime',
             'balance' => 'integer',
+            'email_verified_at' => 'datetime',
+            'activated_at' => 'datetime',
         ];
+    }
+
+    /**
+     * The customer has bound a Firebase account and can log in to the app.
+     * Before that the account is "pending": it works at the counter, but the
+     * app login is not available yet.
+     */
+    public function isActivated(): bool
+    {
+        return $this->activated_at !== null;
     }
 
     public function major()
@@ -64,5 +81,10 @@ class Customer extends Authenticatable
     public function withdrawalAuthorizations()
     {
         return $this->hasMany(WithdrawalAuthorization::class);
+    }
+
+    public function activationTokens()
+    {
+        return $this->hasMany(CustomerActivationToken::class);
     }
 }

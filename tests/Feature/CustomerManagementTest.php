@@ -11,6 +11,7 @@ function customerPayload(array $overrides = []): array
     return array_merge([
         'nis' => '20269999',
         'full_name' => 'Siswa Baru',
+        'email' => ($overrides['nis'] ?? '20269999').'@siswa.example.test',
         'class' => 'X',
         'major_id' => Major::factory()->create()->id,
         'group' => '1',
@@ -96,7 +97,7 @@ test('the client cannot choose the account number, status or balance', function 
 
 test('account creation is validated', function (array $overrides, string $field) {
     actingAsStaff(UserRoles::ADMIN);
-    Customer::factory()->create(['nis' => '20260001']);
+    Customer::factory()->create(['nis' => '20260001', 'email' => 'sama@example.test']);
 
     $this->postJson('/api/admin/customers', customerPayload($overrides))
         ->assertUnprocessable()
@@ -107,6 +108,9 @@ test('account creation is validated', function (array $overrides, string $field)
     'non-numeric PIN' => [['pin' => 'abcdef'], 'pin'],
     'unknown major' => [['major_id' => 999], 'major_id'],
     'invalid class' => [['class' => 'XIII'], 'class'],
+    'missing email' => [['email' => null], 'email'],
+    'invalid email' => [['email' => 'bukan-email'], 'email'],
+    'duplicate email (any case)' => [['email' => 'SAMA@example.test'], 'email'],
 ]);
 
 test('admin can update account details, status and reset the PIN', function () {

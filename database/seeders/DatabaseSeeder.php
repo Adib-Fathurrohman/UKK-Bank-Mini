@@ -61,10 +61,13 @@ class DatabaseSeeder extends Seeder
         // =========================
         // CUSTOMERS (PIN: "123456")
         // =========================
+        // Seeded accounts are "pending": no invitation is emailed here. Send one
+        // with POST /api/admin/customers/{id}/invitation to activate the app.
 
         $customers = [
             [
                 'nis' => '20260001',
+                'email' => 'budi.santoso@example.test',
                 'full_name' => 'Budi Santoso',
                 'class' => 'X',
                 'major' => 'Rekayasa Perangkat Lunak',
@@ -73,6 +76,7 @@ class DatabaseSeeder extends Seeder
             ],
             [
                 'nis' => '20260002',
+                'email' => 'andi.pratama@example.test',
                 'full_name' => 'Andi Pratama',
                 'class' => 'XI',
                 'major' => 'Desain Komunikasi Visual',
@@ -81,6 +85,7 @@ class DatabaseSeeder extends Seeder
             ],
             [
                 'nis' => '20260003',
+                'email' => 'citra.lestari@example.test',
                 'full_name' => 'Citra Lestari',
                 'class' => 'XII',
                 'major' => 'Rekayasa Perangkat Lunak',
@@ -96,6 +101,7 @@ class DatabaseSeeder extends Seeder
                 ?? $customerService->create([
                     'nis' => $data['nis'],
                     'full_name' => $data['full_name'],
+                    'email' => $data['email'],
                     'class' => $data['class'],
                     'major_id' => Major::where('major_name', $data['major'])->value('id'),
                     'group' => $data['group'],

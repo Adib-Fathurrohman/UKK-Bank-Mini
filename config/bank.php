@@ -69,4 +69,33 @@ return [
 
     'withdrawal_authorization_approved_seconds' => (int) env('BANK_WITHDRAWAL_AUTH_APPROVED_SECONDS', 120),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Customer App Sessions
+    |--------------------------------------------------------------------------
+    |
+    | Lifetime of a customer's Sanctum token after a Firebase login or
+    | activation, in minutes (default 30 days). While the session lasts, the
+    | app unlocks with the PIN (POST /customer/unlock). Staff tokens keep
+    | SANCTUM_EXPIRATION.
+    |
+    */
+
+    'customer_session_minutes' => (int) env('CUSTOMER_SESSION_MINUTES', 43200),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Customer Activation
+    |--------------------------------------------------------------------------
+    |
+    | Invitation links are valid for this many hours. The link is
+    | "{customer_activation_url}?token=...", so point it at the page of the
+    | customer app that handles activation.
+    |
+    */
+
+    'activation_token_hours' => (int) env('CUSTOMER_ACTIVATION_TOKEN_HOURS', 24),
+
+    'customer_activation_url' => env('CUSTOMER_ACTIVATION_URL', 'http://localhost:8081/aktivasi'),
+
 ];

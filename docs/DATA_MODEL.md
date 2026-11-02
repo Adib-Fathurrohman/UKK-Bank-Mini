@@ -18,6 +18,7 @@ Major 1 ──── * Customer 1 ──── * Transaction * ──── 1 Da
 User (supervisor) 1 ──── * DailyReport (reviewed)      Setting * ──── 1 User (admin, updated_by)
 User (supervisor) 1 ──── * Transaction (authorized corrections)
 WithdrawalAuthorization * ── 1 User (teller), 1 Customer, 1 DailyReport; 0..1 ── 1 Transaction (consumed)
+CustomerActivationToken * ── 1 Customer; * ── 0..1 User (admin who sent the invitation)
 ```
 
 Foreign keys use `ON DELETE RESTRICT`: anything with history cannot be deleted.
@@ -50,8 +51,11 @@ Students' savings accounts (nasabah). Resources: `CustomerResource` (full),
 | --- | --- | --- | --- |
 | `id` | integer | no | Identifier used in `/customers/{id}` |
 | `account_number` | string | no | Generated, unique, never editable. Format below |
-| `nis` | string ≤ 20 | no | Student number; unique; can be used to log in and to look up |
+| `nis` | string ≤ 20 | no | Student number; unique; used by the teller lookup and the NIS + PIN check |
 | `full_name` | string | no | |
+| `email` | string ≤ 255 | yes | Registered email (lowercase, unique). Required for new accounts; null for older ones until an admin adds it. Not editable after activation. Not in the teller lookup |
+| `activation_status` | `pending` \| `activated` | no | Derived from `activated_at`: `pending` until the customer activates the app with a Firebase account ([CUSTOMER_AUTH.md](CUSTOMER_AUTH.md)) |
+| `activated_at` | timestamp | yes | When the app was activated |
 | `class` | enum | no | `X`, `XI`, `XII` |
 | `group` | enum | no | `1`–`4` (the parallel class, e.g. XI RPL **2**) |
 | `major` | object | no | `{id, code, major_name}` (lookup returns only `major_name`; card returns `{code, major_name}`) |
@@ -62,7 +66,11 @@ Students' savings accounts (nasabah). Resources: `CustomerResource` (full),
 | `pin_locked_until` | timestamp | yes | **Lookup only.** The PIN is locked until then: login, approval and withdrawals are refused (shown only while in the future) |
 | `qr_payload` | string | no | **Card only.** `BANKMINI:{account_number}`; render as a QR code |
 
-Never returned: `pin` (hash), `pin_failed_attempts`.
+Never returned: `pin` (hash), `pin_failed_attempts`, `firebase_uid` (the bound Firebase
+user, unique), `email_verified_at`.
+
+Database rules: `email` and `firebase_uid` are unique;
+`CHECK (activated_at IS NULL OR firebase_uid IS NOT NULL)`.
 
 ### Account number format
 
@@ -82,6 +90,24 @@ Never returned: `pin` (hash), `pin_failed_attempts`.
 | `active` | ✓ | ✓ | ✓ | ✓ | On creation; admin edit |
 | `suspended` | ✓ | — | ✓ | ✓ | Admin edit |
 | `inactive` | — | — | — | — | Only by deactivation (graduation), which also soft-deletes the account |
+
+"Login" means the app login, which also needs `activation_status = activated`.
+Activation is independent of `account_status`: a pending account banks normally at the
+counter.
+
+## Customer activation token (`customer_activation_tokens`)
+
+Invitation links for first-time activation. Not exposed by any resource (the admin and
+resend responses return only `sent_to`/`email`, `expires_at`, `mail_sent`).
+
+| Column | Meaning |
+| --- | --- |
+| `customer_id` | The invited customer |
+| `token_hash` | SHA-256 of the 64-character token in the link (unique); the token itself is never stored |
+| `email` | Address the link was sent to |
+| `issued_by` | Administrator who sent it, or null when the customer requested it |
+| `expires_at` | Issue time + `CUSTOMER_ACTIVATION_TOKEN_HOURS` (24) |
+| `used_at`, `revoked_at` | Usable only while both are null and not expired. A new link revokes older ones |
 
 ## Major (`majors`)
 
@@ -250,6 +276,8 @@ At most one open request per customer and per teller.
 - A teller owns shifts (`daily_reports.teller_id`), transactions
   (`transactions.user_id`) and withdrawal requests (`withdrawal_authorizations.teller_id`).
 - A customer approves or rejects only requests with their `customer_id`.
+- A customer is bound to at most one Firebase user (`firebase_uid`) and a Firebase user to
+  at most one customer; customers authenticate through it, never through a `users` row.
 - A supervisor appears as reviewer (`daily_reports.supervisor_id`), approver
   (`cash_transfers.approved_by`) and correction authorizer
   (`transactions.authorized_by`).

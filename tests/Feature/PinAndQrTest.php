@@ -118,7 +118,10 @@ test('a customer changes their PIN with the current one', function () {
         ->assertJsonPath('message', 'PIN berhasil diubah.');
 
     $this->app['auth']->forgetGuards();
-    $this->postJson('/api/customer/login', ['identifier' => '20260001', 'pin' => '246810'])->assertOk();
+    // The new PIN is accepted at login (which then asks for activation instead of issuing a token).
+    $this->postJson('/api/customer/login', ['identifier' => '20260001', 'pin' => '246810'])
+        ->assertForbidden()
+        ->assertJsonPath('code', 'activation_required');
 
     Sanctum::actingAs($this->teller);
     withdrawWithPin('123456')->assertUnprocessable();

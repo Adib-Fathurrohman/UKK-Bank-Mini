@@ -13,13 +13,23 @@ test('staff log in through the single gateway', function () {
         ->assertJsonPath('data.user.role', 'supervisor');
 });
 
-test('customers log in through the single gateway', function () {
-    $customer = Customer::factory()->create(['nis' => '20260001', 'pin' => '123456']);
+test('customers log in through the single gateway with a Firebase ID token', function () {
+    $customer = Customer::factory()->activated('uid-budi')->create(['email' => 'budi@example.test']);
+    $idToken = fakeFirebase()->issue('uid-budi', 'budi@example.test');
 
-    $this->postJson('/api/login', ['identifier' => '20260001', 'pin' => '123456'])
+    $this->postJson('/api/login', ['id_token' => $idToken])
         ->assertOk()
         ->assertJsonPath('data.actor', 'customer')
         ->assertJsonPath('data.customer.id', $customer->id);
+});
+
+test('NIS and PIN through the gateway only report that activation is needed', function () {
+    Customer::factory()->create(['nis' => '20260001', 'pin' => '123456']);
+
+    $this->postJson('/api/login', ['identifier' => '20260001', 'pin' => '123456'])
+        ->assertForbidden()
+        ->assertJsonPath('code', 'activation_required')
+        ->assertJsonMissingPath('data.token');
 });
 
 test('the gateway validates each kind of credentials', function () {

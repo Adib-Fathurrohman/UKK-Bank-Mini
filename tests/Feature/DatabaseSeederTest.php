@@ -53,7 +53,11 @@ test('demo accounts can log in and the teller can open today\'s shift', function
     $this->seed();
 
     $token = $this->postJson('/api/login', ['username' => 'teller', 'password' => 'password'])->assertOk()->json('data.token');
-    $this->postJson('/api/login', ['identifier' => '20260001', 'pin' => '123456'])->assertOk();
+    // Seeded customers are pending: their PIN is correct and they are asked to activate the app.
+    $this->postJson('/api/login', ['identifier' => '20260001', 'pin' => '123456'])
+        ->assertForbidden()
+        ->assertJsonPath('code', 'activation_required')
+        ->assertJsonPath('email', 'b***@example.test');
 
     $this->withToken($token)->postJson('/api/teller/shift/open', ['denominations' => ['50000' => 2]])->assertCreated();
 });

@@ -29,6 +29,7 @@ class CustomerFactory extends Factory
             'account_number' => fake()->unique()->numerify('TST-2026-####'),
             'nis' => fake()->unique()->numerify('2026####'),
             'full_name' => fake()->name(),
+            'email' => fake()->unique()->safeEmail(),
             'class' => fake()->randomElement(['X', 'XI', 'XII']),
             'major_id' => Major::factory(),
             'group' => fake()->randomElement(['1', '2', '3', '4']),
@@ -36,6 +37,18 @@ class CustomerFactory extends Factory
             'pin' => static::$pin ??= Hash::make('123456'),
             'balance' => 0,
         ];
+    }
+
+    /**
+     * The customer has activated the app with a Firebase account.
+     */
+    public function activated(?string $firebaseUid = null): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'firebase_uid' => $firebaseUid ?? 'firebase-'.fake()->unique()->bothify('????????????'),
+            'email_verified_at' => now(),
+            'activated_at' => now(),
+        ]);
     }
 
     public function inactive(): static

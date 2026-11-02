@@ -75,9 +75,14 @@ test('each endpoint is reachable only by its allowed actors', function (string $
     }
 })->with($endpoints)->with(['admin', 'supervisor', 'teller', 'customer', 'guest']);
 
-test('every API route except login requires a Sanctum token and an actor check', function () {
+test('every API route except login and activation requires a Sanctum token and an actor check', function () {
+    // Public on purpose: the credentials (password, Firebase ID token, PIN or invitation token) are the proof.
+    $public = ['api/customer/activation/inspect', 'api/customer/activation/complete', 'api/customer/activation/resend'];
+
     $routes = collect(Route::getRoutes()->getRoutes())
-        ->filter(fn ($route) => str_starts_with($route->uri(), 'api/') && ! str_ends_with($route->uri(), '/login'));
+        ->filter(fn ($route) => str_starts_with($route->uri(), 'api/')
+            && ! str_ends_with($route->uri(), '/login')
+            && ! in_array($route->uri(), $public, true));
 
     $unprotected = $routes->reject(function ($route) {
         $middleware = collect($route->gatherMiddleware());
