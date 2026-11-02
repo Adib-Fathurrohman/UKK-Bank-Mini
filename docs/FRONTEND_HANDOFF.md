@@ -208,6 +208,7 @@ Every error body has `message`. Handle by status:
 | `409` | Staff delete refused (has history) | Offer "Block" instead |
 | `422` + `errors` | Field validation (`errors.field[]`) | Show messages next to fields |
 | `422` without `errors` | Business rule refused (`message` only, Indonesian) | Show the message prominently; nothing was saved |
+| `422` with `code: customer_app_not_activated` | Withdrawal approval requested for a customer who has not activated the app (§15.5) | Show `message`; in `both` mode switch to the PIN pad |
 | `429` | Rate limit (login 5/min per identifier+IP, Firebase login 30/min per IP; activation 20/min per IP; corrections 10/min per teller; see CUSTOMER_AUTH.md §3.7) | "Too many attempts, wait a minute" |
 | `500` | Server error. All money operations are rolled back | Generic error. In local dev (`APP_DEBUG=true`) the body includes a stack trace: never show it raw |
 
@@ -350,9 +351,10 @@ USER ACTION   Counts the drawer per denomination, submits
 USER ACTION   Scans the card QR or types account number/NIS
 → ENDPOINT    GET /api/teller/customers/lookup?identifier=BANKMINI%3ARPL-2026-001
 → VALIDATION  identifier required, max 60
-→ RESPONSE    200 {data:{id, account_number, nis, full_name, class, group, major_name, account_status, balance, pin_locked_until}} · 404
+→ RESPONSE    200 {data:{id, account_number, nis, full_name, class, group, major_name, account_status, balance, pin_locked_until, activation_status}} · 404
 → UI          Show a customer card; disable deposit/withdraw when account_status ≠ active;
-              disable withdraw while pin_locked_until is in the future; show balance
+              disable withdraw while pin_locked_until is in the future; show balance;
+              activation_status "pending" (app not activated) → no mobile approval (§15.5)
 ```
 
 ### 15.4 Deposit
@@ -376,13 +378,28 @@ Two ways, chosen by the `withdrawal_verification` setting (`GET /api/settings`):
 `mobile` (default) → **A**; `terminal` → **B**; `both` → offer both (e.g. B as the
 fallback for a customer without a phone).
 
+**A** needs a customer who has activated the app (`activation_status: "activated"` from the
+lookup). For a `pending` customer the backend refuses A with
+`422 {"message": "...", "code": "customer_app_not_activated"}` instead of creating a request
+that would only expire after 2 minutes:
+
+| Mode | Customer `pending` | Show |
+| --- | --- | --- |
+| `mobile` | No withdrawal possible at the counter | Disable "Kirim ke aplikasi nasabah" with the hint "Nasabah belum mengaktifkan aplikasi"; the backend message: `Nasabah belum mengaktifkan aplikasi Bank Mini, sehingga tidak dapat menyetujui penarikan melalui aplikasi. Minta nasabah menyelesaikan aktivasi melalui tautan di email undangan terlebih dahulu.` |
+| `both` | Only **B** (PIN at the terminal) | Hide or disable A, show the PIN pad; the backend message for A: `Nasabah belum mengaktifkan aplikasi Bank Mini, sehingga tidak dapat menyetujui penarikan melalui aplikasi. Lakukan penarikan dengan PIN nasabah di terminal loket.` |
+| `terminal` | Unaffected (B only) | — |
+
+Disable up front from `activation_status`, and still handle the `422` code (the status can
+change between lookup and request): show `message` as is.
+
 **A. Customer approves in the mobile app (default)**
 
 ```text
 TELLER        Enters amount → "Kirim ke aplikasi nasabah"
 → ENDPOINT    POST /api/teller/withdrawal-authorizations {"account_number":"RPL-2026-001","amount":30000}
 → RESPONSE    201 {data:{id, status:"pending", expires_at, server_time, customer, ...}} ·
-              422 open request exists / PIN locked / balance / shift / status / mode disabled
+              422 open request exists / PIN locked / balance / shift / status / mode disabled ·
+              422 {message, code:"customer_app_not_activated"} (app not activated, see above)
 → UI          Waiting screen: amount, customer, countdown (expires_at − server_time), "Batalkan"
               Poll GET /api/teller/withdrawal-authorizations/{id} every 2 s
               On a reload: GET /api/teller/withdrawal-authorizations?status=open to resume

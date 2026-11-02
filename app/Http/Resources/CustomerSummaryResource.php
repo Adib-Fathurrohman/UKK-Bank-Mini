@@ -31,6 +31,8 @@ class CustomerSummaryResource extends JsonResource
             'balance' => $this->balance,
             // Withdrawals are refused until then after too many wrong PINs.
             'pin_locked_until' => $this->pin_locked_until?->isFuture() ? $this->pin_locked_until : null,
+            // Only an activated customer can approve a withdrawal in the app.
+            'activation_status' => $this->isActivated() ? 'activated' : 'pending',
         ];
     }
 }

@@ -209,21 +209,26 @@ Common requirements for every page:
 - **Functions:**
   - QR scan via camera (`webcam`), keyboard-wedge scanner input (`usb`), or manual
     entry (`disabled`), always with a manual fallback field;
-  - customer panel: name, account number, NIS, class/major, status, balance, PIN lock;
+  - customer panel: name, account number, NIS, class/major, status, balance, PIN lock,
+    and whether the customer app is activated (`activation_status`);
   - amount input (integer, **multiples of 100**, ≤ 100,000,000);
   - withdrawal pre-check: `balance − amount ≥ min_balance` before sending the request
     (or showing the PIN pad in terminal mode);
   - confirmation dialog summarizing type, account, name, amount (and amount in words);
   - withdrawal, `mobile` mode: "send to the customer's app" instead of a PIN pad (see
-    *Withdrawal approval*);
+    *Withdrawal approval*); only for `activation_status = activated` (a `pending` customer
+    cannot approve: disable the button and say the app is not activated yet);
   - withdrawal, `terminal` mode: customer PIN pad (masked, cleared after each attempt;
-    show `remaining_attempts` / lock time); in `both` mode offer both;
+    show `remaining_attempts` / lock time); in `both` mode offer both, but only the PIN
+    pad for a `pending` customer;
   - `Idempotency-Key` per confirmed submission, reused on retry; submit disabled while
     pending;
   - keyboard operation (Enter to confirm) as requested in the interview.
 - **States:** shift not open → counter disabled; account `suspended` → transactions
-  disabled; PIN locked → withdraw disabled; `422` business message; success with new
-  balance and receipt option.
+  disabled; PIN locked → withdraw disabled; app not activated → mobile withdrawal
+  disabled (in `mobile` mode no withdrawal at all; in `both` mode PIN pad only); `422`
+  business message (`code: customer_app_not_activated` if the status changed after the
+  lookup); success with new balance and receipt option.
 - **Permissions:** teller.
 
 ### Withdrawal approval (waiting screen)

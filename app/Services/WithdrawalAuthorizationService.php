@@ -6,6 +6,7 @@ use App\Enums\AccountStatus;
 use App\Enums\WithdrawalAuthorizationStatus as Status;
 use App\Exceptions\AccountNotActiveException;
 use App\Exceptions\AuthorizationNotUsableException;
+use App\Exceptions\CustomerAppNotActivatedException;
 use App\Exceptions\InsufficientBalanceException;
 use App\Exceptions\InvalidPinException;
 use App\Models\Customer;
@@ -56,6 +57,11 @@ class WithdrawalAuthorizationService
 
             if ($customer->account_status !== AccountStatus::ACTIVE) {
                 throw new AccountNotActiveException($customer->account_status);
+            }
+
+            // Only the app can approve; without it the request could only expire.
+            if (! $customer->isActivated()) {
+                throw CustomerAppNotActivatedException::forMode($this->settings->allowsTerminalWithdrawalVerification());
             }
 
             if ($customer->pin_locked_until?->isFuture()) {

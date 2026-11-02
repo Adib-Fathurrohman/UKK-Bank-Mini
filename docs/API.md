@@ -704,13 +704,19 @@ Closed accounts are not found (**404** `Nasabah tidak ditemukan.`).
     "id": 1, "account_number": "RPL-2026-001", "nis": "20260001", "full_name": "Budi Santoso",
     "class": "X", "group": "1", "major_name": "Rekayasa Perangkat Lunak",
     "account_status": "active", "balance": 500000,
-    "pin_locked_until": null
+    "pin_locked_until": null,
+    "activation_status": "activated"
   }
 }
 ```
 
 `pin_locked_until` is set while the PIN is locked after wrong PINs (no withdrawal
 request can be created for the customer until then).
+
+`activation_status` is `activated` once the customer has activated the customer app
+(Firebase account linked, see [CUSTOMER_AUTH.md](CUSTOMER_AUTH.md)), otherwise `pending`.
+Only an activated customer can approve a withdrawal in the app: for a `pending` customer
+`POST /teller/withdrawal-authorizations` is refused (`customer_app_not_activated`).
 
 #### Idempotency
 
@@ -902,8 +908,9 @@ the message is about a specific request:
 | `amount` | required, integer 1 – 100,000,000 |
 
 Checks everything the withdrawal will need **before** the customer is asked: open shift
-for today, account `active`, PIN not locked, `balance − amount ≥ min_balance`, no other
-open request of this teller, no open request for this customer. No money moves.
+for today, account `active`, customer app activated, PIN not locked,
+`balance − amount ≥ min_balance`, no other open request of this teller, no open request for
+this customer. No money moves.
 
 **201**
 
@@ -931,6 +938,22 @@ balance error and the PIN lock error of `POST /teller/withdrawals`:
 | `Masih ada permintaan penarikan yang belum selesai. Selesaikan atau batalkan terlebih dahulu.` | This teller already has an open request |
 | `Nasabah ini masih memiliki permintaan penarikan yang belum selesai.` | The customer already has an open request (from any teller) |
 | `Persetujuan penarikan melalui aplikasi nasabah sedang tidak diaktifkan.` | Setting is `terminal` |
+
+**422 `customer_app_not_activated`**: the customer has not activated the customer app
+(`activation_status: pending`), so nobody could approve the request. This is the only error
+of this endpoint with a `code`; the message depends on `withdrawal_verification`:
+
+```json
+{
+  "message": "Nasabah belum mengaktifkan aplikasi Bank Mini, sehingga tidak dapat menyetujui penarikan melalui aplikasi. Minta nasabah menyelesaikan aktivasi melalui tautan di email undangan terlebih dahulu.",
+  "code": "customer_app_not_activated"
+}
+```
+
+With `both`, the second sentence is
+`Lakukan penarikan dengan PIN nasabah di terminal loket.` (the terminal endpoint
+`POST /teller/withdrawals` still works for this customer). An inactive account is reported
+first, with the usual account-status error.
 
 #### `GET /teller/withdrawal-authorizations` · `GET /teller/withdrawal-authorizations/{id}`
 

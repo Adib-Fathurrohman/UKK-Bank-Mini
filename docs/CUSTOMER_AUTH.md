@@ -261,6 +261,9 @@ sessions; use `logout-all` or deactivation for that.
 
 ## 6. Firebase Console configuration
 
+The project in use is `bank-mini-rumput`; what is already configured there, and the web
+config for the customer app, is in [firebase-web-config.md](firebase-web-config.md).
+
 1. **Project.** Create or choose a Firebase project. Its ID is `FIREBASE_PROJECT_ID`.
 2. **Sign-in providers** (Authentication → Sign-in method):
    - Enable **Email/Password** (the "Email link (passwordless)" option is not used).

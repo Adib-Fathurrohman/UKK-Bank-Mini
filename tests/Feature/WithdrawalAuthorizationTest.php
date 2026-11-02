@@ -23,7 +23,7 @@ use Laravel\Sanctum\Sanctum;
 
 beforeEach(function () {
     $this->travelTo(Carbon::parse('2026-10-23 09:00:00'));
-    $this->customer = Customer::factory()->create([
+    $this->customer = Customer::factory()->activated()->create([
         'account_number' => 'RPL-2026-001',
         'nis' => '20260001',
         'pin' => '123456',
@@ -396,7 +396,7 @@ test('a customer can have only one open request', function () {
 
 test('a teller can have only one open request', function () {
     pendingWithdrawal();
-    Customer::factory()->create(['account_number' => 'RPL-2026-002', 'balance' => 100000]);
+    Customer::factory()->activated()->create(['account_number' => 'RPL-2026-002', 'balance' => 100000]);
 
     requestWithdrawal(20000, 'RPL-2026-002')->assertUnprocessable();
 
@@ -532,7 +532,7 @@ test('the balance is checked again when completing', function () {
 });
 
 test('requests are refused for accounts that are not active', function () {
-    Customer::factory()->suspended()->create(['account_number' => 'RPL-2026-009', 'balance' => 100000]);
+    Customer::factory()->suspended()->activated()->create(['account_number' => 'RPL-2026-009', 'balance' => 100000]);
 
     requestWithdrawal(20000, 'RPL-2026-009')->assertUnprocessable();
     expect(WithdrawalAuthorization::count())->toBe(0);
@@ -606,6 +606,59 @@ test('in both mode either way works', function () {
 
     requestWithdrawal()->assertCreated();
     $this->postJson('/api/teller/withdrawals', ['account_number' => 'RPL-2026-001', 'amount' => 20000, 'pin' => '123456'])->assertCreated();
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customers who have not activated the app
+|--------------------------------------------------------------------------
+*/
+
+test('the teller lookup shows whether the customer has activated the app', function () {
+    Customer::factory()->create(['account_number' => 'RPL-2026-002']);
+
+    $this->getJson('/api/teller/customers/lookup?identifier=RPL-2026-001')->assertOk()->assertJsonPath('data.activation_status', 'activated');
+    $this->getJson('/api/teller/customers/lookup?identifier=RPL-2026-002')->assertOk()->assertJsonPath('data.activation_status', 'pending');
+});
+
+test('in mobile mode a request for a customer without the app is refused up front', function () {
+    $pending = Customer::factory()->create(['account_number' => 'RPL-2026-002', 'balance' => 100000]);
+
+    requestWithdrawal(20000, 'RPL-2026-002')
+        ->assertUnprocessable()
+        ->assertExactJson([
+            'message' => 'Nasabah belum mengaktifkan aplikasi Bank Mini, sehingga tidak dapat menyetujui penarikan melalui aplikasi. Minta nasabah menyelesaikan aktivasi melalui tautan di email undangan terlebih dahulu.',
+            'code' => 'customer_app_not_activated',
+        ]);
+
+    expect(WithdrawalAuthorization::count())->toBe(0)
+        ->and($pending->fresh()->balance)->toBe(100000);
+
+    // The teller is not left with an open request and can serve the next customer.
+    pendingWithdrawal();
+});
+
+test('in both mode the request is refused too and the teller is pointed to the terminal', function () {
+    allowTerminalWithdrawals('both');
+    Customer::factory()->create(['account_number' => 'RPL-2026-002', 'pin' => '654321', 'balance' => 100000]);
+
+    requestWithdrawal(20000, 'RPL-2026-002')
+        ->assertUnprocessable()
+        ->assertExactJson([
+            'message' => 'Nasabah belum mengaktifkan aplikasi Bank Mini, sehingga tidak dapat menyetujui penarikan melalui aplikasi. Lakukan penarikan dengan PIN nasabah di terminal loket.',
+            'code' => 'customer_app_not_activated',
+        ]);
+    expect(WithdrawalAuthorization::count())->toBe(0);
+
+    $this->postJson('/api/teller/withdrawals', ['account_number' => 'RPL-2026-002', 'amount' => 20000, 'pin' => '654321'])->assertCreated();
+});
+
+test('an inactive account is reported before the missing activation', function () {
+    Customer::factory()->suspended()->create(['account_number' => 'RPL-2026-002', 'balance' => 100000]);
+
+    requestWithdrawal(20000, 'RPL-2026-002')
+        ->assertUnprocessable()
+        ->assertJsonMissingPath('code');
 });
 
 /*
