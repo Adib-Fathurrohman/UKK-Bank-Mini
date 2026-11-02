@@ -1,0 +1,128 @@
+# Tests every push and pull request; deploys the `production` branch to the VPS.
+# Setup (secrets, variables, first-time server steps): docs/DEPLOY.md.
+name: CI/CD
+
+on:
+  push:
+    branches: [main, production]
+  pull_request:
+    branches: [main, production]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # The locked dependencies need PHP 8.4+ (Symfony 8). Keep in line with the VPS.
+  PHP_VERSION: '8.4'
+  PHP_EXTENSIONS: mbstring, intl, bcmath, gd, zip, pdo_mysql, pdo_sqlite, sodium, curl, fileinfo
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: ${{ env.PHP_EXTENSIONS }}
+          coverage: none
+
+      - name: Cache Composer packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.composer/cache/files
+          key: composer-${{ runner.os }}-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      # phpunit.xml switches to in-memory SQLite and empty Firebase settings, so no
+      # database server or Firebase credentials are needed here.
+      - run: php artisan test
+
+      - name: API summary matches the routes
+        run: python3 tools/build_api_summary.py --check
+
+  deploy:
+    name: Deploy to production
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/production'
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    env:
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/var/www/bank-mini-laravel' }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+      TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: ${{ env.PHP_EXTENSIONS }}
+          coverage: none
+
+      - name: Install production dependencies
+        run: composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist --no-progress
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build front-end assets (welcome page)
+        run: |
+          npm ci
+          npm run build
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          if [ -n "$KNOWN_HOSTS" ]; then
+            printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::DEPLOY_KNOWN_HOSTS is not set; trusting the host key from ssh-keyscan."
+            ssh-keyscan -p "$DEPLOY_PORT" "$HOST" > ~/.ssh/known_hosts
+          fi
+          chmod 600 ~/.ssh/known_hosts
+          echo "SSH_CMD=ssh -i $HOME/.ssh/deploy_key -p $DEPLOY_PORT -o BatchMode=yes" >> "$GITHUB_ENV"
+
+      - name: Maintenance mode on
+        run: $SSH_CMD "$TARGET" "if [ -f '$DEPLOY_PATH/artisan' ]; then cd '$DEPLOY_PATH' && php artisan down --retry=15 || true; fi"
+
+      # .env, storage/ (logs, Firebase key, caches) and bootstrap/cache stay on the
+      # server: excluded paths are never deleted by --delete.
+      - name: Upload release
+        run: |
+          rsync -az --delete \
+            --exclude-from=deploy/rsync-exclude.txt \
+            --rsync-path="mkdir -p '$DEPLOY_PATH' && rsync" \
+            -e "$SSH_CMD" \
+            ./ "$TARGET:$DEPLOY_PATH/"
+
+      - name: Migrate, cache and bring the site back up
+        env:
+          WEB_USER: ${{ vars.WEB_USER || 'www-data' }}
+          PHP_FPM_SERVICE: ${{ vars.PHP_FPM_SERVICE }}
+        run: $SSH_CMD "$TARGET" "WEB_USER='$WEB_USER' PHP_FPM_SERVICE='$PHP_FPM_SERVICE' bash '$DEPLOY_PATH/deploy/post-deploy.sh'"
+
+      - name: Bring the site back up after a failure
+        if: failure()
+        run: $SSH_CMD "$TARGET" "if [ -f '$DEPLOY_PATH/artisan' ]; then cd '$DEPLOY_PATH' && php artisan up || true; fi"

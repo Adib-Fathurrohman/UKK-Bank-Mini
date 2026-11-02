@@ -1,0 +1,18 @@
+# Paths the CI/CD upload neither sends nor deletes on the server.
+# Server-only state:
+/.env
+/.env.*
+/storage/
+/bootstrap/cache/*.php
+/public/storage
+# Not needed to run the app:
+/.git/
+/.github/
+/.claude/
+/node_modules/
+/tests/
+/docs/
+/tools/
+/phpunit.xml
+/.phpunit.cache/
+.DS_Store
