@@ -15,7 +15,6 @@ function customerPayload(array $overrides = []): array
         'class' => 'X',
         'major_id' => Major::factory()->create()->id,
         'group' => '1',
-        'pin' => '246810',
     ], $overrides);
 }
 
@@ -30,11 +29,12 @@ test('admin can open an account linked to a major', function () {
         ->assertJsonPath('data.major.id', $payload['major_id'])
         ->assertJsonPath('data.account_status', 'active')
         ->assertJsonPath('data.balance', 0)
+        ->assertJsonPath('data.pin_set', false)
         ->assertJsonMissingPath('data.pin');
 
     $customer = Customer::firstWhere('nis', '20269999');
     expect($customer->account_number)->toMatch('/^[A-Z]+-\d{4}-\d{3}$/')
-        ->and(Hash::check('246810', $customer->pin))->toBeTrue();
+        ->and($customer->pin)->toBeNull();
 });
 
 test('account numbers combine major code, school year and a serial per major and year', function () {
@@ -104,8 +104,7 @@ test('account creation is validated', function (array $overrides, string $field)
         ->assertJsonValidationErrors($field);
 })->with([
     'duplicate NIS' => [['nis' => '20260001'], 'nis'],
-    'short PIN' => [['pin' => '123'], 'pin'],
-    'non-numeric PIN' => [['pin' => 'abcdef'], 'pin'],
+    'any PIN (the customer creates it)' => [['pin' => '246810'], 'pin'],
     'unknown major' => [['major_id' => 999], 'major_id'],
     'invalid class' => [['class' => 'XIII'], 'class'],
     'missing email' => [['email' => null], 'email'],
@@ -113,7 +112,7 @@ test('account creation is validated', function (array $overrides, string $field)
     'duplicate email (any case)' => [['email' => 'SAMA@example.test'], 'email'],
 ]);
 
-test('admin can update account details, status and reset the PIN', function () {
+test('admin can update account details and status, but not the PIN', function () {
     actingAsStaff(UserRoles::ADMIN);
     $customer = Customer::factory()->create(['balance' => 50000]);
 
@@ -121,13 +120,16 @@ test('admin can update account details, status and reset the PIN', function () {
         'full_name' => 'Nama Diperbarui',
         'class' => 'XI',
         'account_status' => 'suspended',
-        'pin' => '111222',
     ])->assertOk()
         ->assertJsonPath('data.full_name', 'Nama Diperbarui')
         ->assertJsonPath('data.account_status', 'suspended');
 
+    $this->patchJson("/api/admin/customers/{$customer->id}", ['pin' => '111222'])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['pin' => 'PIN dibuat oleh nasabah di aplikasi Bank Mini. Gunakan reset PIN jika nasabah lupa PIN.']);
+
     $customer->refresh();
-    expect(Hash::check('111222', $customer->pin))->toBeTrue()
+    expect(Hash::check('123456', $customer->pin))->toBeTrue()
         ->and($customer->balance)->toBe(50000);
 });
 

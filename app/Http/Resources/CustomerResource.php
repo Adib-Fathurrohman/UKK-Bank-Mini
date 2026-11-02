@@ -26,6 +26,8 @@ class CustomerResource extends JsonResource
             // "pending" until the customer activates the app with a Firebase account.
             'activation_status' => $this->isActivated() ? 'activated' : 'pending',
             'activated_at' => $this->activated_at,
+            // The customer creates the PIN in the app after activation; nothing that needs a PIN works before.
+            'pin_set' => $this->hasPin(),
             'class' => $this->class,
             'group' => $this->group,
             'major' => $this->whenLoaded('major', fn () => [

@@ -18,6 +18,7 @@ $endpoints = [
     'change settings' => ['PATCH', '/api/admin/settings', ['admin']],
     'open account' => ['POST', '/api/admin/customers', ['admin']],
     'close account' => ['POST', '/api/admin/customers/1/deactivate', ['admin']],
+    'reset customer PIN' => ['POST', '/api/admin/customers/1/pin-reset', ['admin']],
     'print customer card' => ['GET', '/api/admin/customers/1/card', ['admin']],
     'read accounts' => ['GET', '/api/customers', ['admin', 'supervisor']],
     'read journal' => ['GET', '/api/audit/journals', ['admin', 'supervisor']],
@@ -29,6 +30,7 @@ $endpoints = [
     'customer statement' => ['GET', '/api/customers/1/statement', ['admin', 'supervisor']],
     'receipt' => ['GET', '/api/teller/transactions/1/receipt', ['teller']],
     'own statement export' => ['GET', '/api/customer/statement/export', ['customer']],
+    'create own PIN' => ['POST', '/api/customer/pin/setup', ['customer']],
     'look up customer' => ['GET', '/api/teller/customers/lookup', ['teller']],
     'deposit' => ['POST', '/api/teller/deposits', ['teller']],
     'withdraw' => ['POST', '/api/teller/withdrawals', ['teller']],
@@ -76,8 +78,8 @@ test('each endpoint is reachable only by its allowed actors', function (string $
 })->with($endpoints)->with(['admin', 'supervisor', 'teller', 'customer', 'guest']);
 
 test('every API route except login and activation requires a Sanctum token and an actor check', function () {
-    // Public on purpose: the credentials (password, Firebase ID token, PIN or invitation token) are the proof.
-    $public = ['api/customer/activation/inspect', 'api/customer/activation/complete', 'api/customer/activation/resend'];
+    // Public on purpose: the credentials (password, or Firebase ID token with the NIS) are the proof.
+    $public = ['api/customer/activation'];
 
     $routes = collect(Route::getRoutes()->getRoutes())
         ->filter(fn ($route) => str_starts_with($route->uri(), 'api/')

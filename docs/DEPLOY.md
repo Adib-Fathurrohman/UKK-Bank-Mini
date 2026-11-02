@@ -97,18 +97,11 @@ FIREBASE_PROJECT_ID=bank-mini-rumput
 FIREBASE_CREDENTIALS=storage/app/private/firebase-credentials.json
 FIREBASE_ALLOWED_PROVIDERS=password,google.com
 
-CUSTOMER_ACTIVATION_URL=https://app.rumput.tech/aktivasi
-CUSTOMER_ACTIVATION_TOKEN_HOURS=24
 CUSTOMER_SESSION_MINUTES=43200
-
-MAIL_MAILER=smtp
-MAIL_HOST=<smtp host>
-MAIL_PORT=587
-MAIL_USERNAME=<smtp user>
-MAIL_PASSWORD=<smtp password>
-MAIL_FROM_ADDRESS="noreply@rumput.tech"
-MAIL_FROM_NAME="Bank Mini"
 ```
+
+No mail settings are needed: the backend sends no email (Firebase sends its own
+verification and password-reset emails).
 
 Copy the Firebase service account key from your computer (it is never in git):
 

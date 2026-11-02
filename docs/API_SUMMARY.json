@@ -1,7 +1,7 @@
 {
   "name": "E-Teller Bank Mini API",
   "source_of_truth": "Laravel backend implementation (routes, form requests, controllers, services, resources). This file is a generated index; see docs/API.md for examples.",
-  "generated_from_commit": "2c5417f",
+  "generated_from_commit": "0cf9e0b-dirty",
   "base_url": "{APP_URL}/api (UNKNOWN for deployments; local default http://localhost:8000/api)",
   "conventions": {
     "headers": {
@@ -17,25 +17,24 @@
     "sorting": "no sort parameters; fixed order per endpoint",
     "errors": {
       "401": "{message:'Unauthenticated.'} missing/invalid/expired token; {message, code:'firebase_token_invalid'} invalid, expired, revoked or disabled Firebase ID token",
-      "403": "{message} wrong actor/role, blocked staff, closed customer, or admin account protection; customer auth: {message, code, email?} with code activation_required | firebase_login_required | account_not_linked | account_inactive | email_not_verified | email_mismatch | provider_not_allowed",
+      "403": "{message} wrong actor/role, blocked staff, closed customer, or admin account protection; customer auth: {message, code} with code account_not_linked | account_inactive | email_not_verified | activation_mismatch | provider_not_allowed | identity_mismatch",
       "404": "{message:'Data tidak ditemukan.'} not found or not owned",
-      "409": "{message} staff delete refused (has history); {message, code} identity_already_linked | already_activated",
-      "422": "{message, errors?} validation (errors per field) or business rule (message only, sometimes extra fields)",
+      "409": "{message} staff delete refused (has history); {message, code} identity_already_linked | already_activated | pin_already_set",
+      "422": "{message, errors?} validation (errors per field) or business rule (message only, sometimes extra fields); {message, code} pin_not_set | customer_app_not_activated",
       "429": "{message:'Too Many Attempts.'}",
       "500": "{message} server error; money operations fully rolled back",
-      "410": "{message, code:'activation_expired'} expired activation link",
       "503": "{message, code:'auth_unavailable'} Firebase unreachable or not configured"
     }
   },
   "auth": {
     "mechanism": "Laravel Sanctum personal access tokens (bearer)",
-    "login": "POST /api/login (staff: username+password; customer: id_token = Firebase ID token)",
+    "login": "POST /api/login (staff: username+password; customer: id_token = Firebase ID token). NIS/account number + PIN is not a credential",
     "token_lifetime_minutes": {
       "staff": "480 (SANCTUM_EXPIRATION)",
       "customer": "43200 by default (CUSTOMER_SESSION_MINUTES); returned as expires_at"
     },
     "refresh": "not implemented",
-    "customer_identity": "Firebase Authentication (Google or email/password), bound to the account at first-time activation; the 6-digit PIN unlocks the app during a session and authorizes withdrawals",
+    "customer_identity": "Firebase Authentication (Google or email/password), bound to the account at first-time activation (POST /api/customer/activation with the NIS; the verified email must equal the registered email). The customer then creates the 6-digit PIN (POST /api/customer/pin/setup), which unlocks the app during a session and authorizes withdrawals. The backend sends no email",
     "actors": {
       "staff": "App\\Models\\User with role admin|supervisor|teller",
       "customer": "App\\Models\\Customer (nasabah)"
@@ -123,7 +122,7 @@
       "google.com"
     ]
   },
-  "route_count": 74,
+  "route_count": 72,
   "endpoints": [
     {
       "method": "POST",
@@ -133,7 +132,7 @@
       "roles": [
         "admin"
       ],
-      "purpose": "Open a savings account (account number generated, status active, balance 0, activation pending) and email the activation link.",
+      "purpose": "Open a savings account (account number generated, status active, balance 0, activation pending, no PIN). No email is sent.",
       "request": {
         "body": {
           "nis": {
@@ -165,20 +164,15 @@
             "type": "string",
             "required": true,
             "rules": "1|2|3|4"
-          },
-          "pin": {
-            "type": "string",
-            "required": true,
-            "rules": "exactly 6 digits"
           }
         },
         "content_type": "application/json"
       },
-      "response": "201 {invitation:{sent_to, expires_at, mail_sent}, data: Customer {id, account_number, nis, full_name, email, activation_status, activated_at, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}",
+      "response": "201 {data: Customer {id, account_number, nis, full_name, email, activation_status, activated_at, pin_set, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}} (activation_status pending, pin_set false)",
       "errors": [
         "422 validation"
       ],
-      "notes": "account_number, account_status and balance in the body are ignored. Format {MAJOR CODE}-{SCHOOL YEAR}-{SERIAL}, e.g. RPL-2026-001. The invitation is sent synchronously after the account is committed; if sending fails the account still exists (invitation.mail_sent false) and the link can be resent."
+      "notes": "account_number, account_status and balance in the body are ignored. Format {MAJOR CODE}-{SCHOOL YEAR}-{SERIAL}, e.g. RPL-2026-001. Sending pin is a 422: the customer creates the PIN in the app after activation."
     },
     {
       "method": [
@@ -210,7 +204,7 @@
           "email": {
             "type": "string",
             "required": false,
-            "rules": "valid email, max 255, unique ignoring self; only while activation is pending (changing it revokes outstanding links)"
+            "rules": "valid email, max 255, unique ignoring self; only while activation is pending"
           },
           "class": {
             "type": "string",
@@ -231,20 +225,16 @@
             "type": "string",
             "required": false,
             "rules": "active|suspended (inactive refused)"
-          },
-          "pin": {
-            "type": "string",
-            "required": false,
-            "rules": "exactly 6 digits; also clears a PIN lock"
           }
         },
         "content_type": "application/json"
       },
-      "response": "200 {data: Customer {id, account_number, nis, full_name, email, activation_status, activated_at, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}",
+      "response": "200 {data: Customer {id, account_number, nis, full_name, email, activation_status, activated_at, pin_set, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}",
       "errors": [
         "404",
         "422 (including 'Email tidak dapat diubah setelah rekening diaktifkan.')"
-      ]
+      ],
+      "notes": "pin is prohibited (422); use POST /api/admin/customers/{customer}/pin-reset."
     },
     {
       "method": "GET",
@@ -273,41 +263,34 @@
       "roles": [
         "admin"
       ],
-      "purpose": "Graduate/close an account: status inactive, tokens and activation links revoked, Firebase user disabled (best effort), soft deleted. No balance check, no undo endpoint.",
+      "purpose": "Graduate/close an account: status inactive, tokens revoked, Firebase user disabled (best effort), soft deleted. No balance check, no undo endpoint.",
       "request": {
         "path_params": {
           "customer": "integer id"
         }
       },
-      "response": "200 {data: Customer {id, account_number, nis, full_name, email, activation_status, activated_at, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}} with deleted_at set",
+      "response": "200 {data: Customer {id, account_number, nis, full_name, email, activation_status, activated_at, pin_set, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}} with deleted_at set",
       "errors": [
         "404 already closed"
       ]
     },
     {
       "method": "POST",
-      "path": "/api/admin/customers/{customer}/invitation",
+      "path": "/api/admin/customers/{customer}/pin-reset",
       "auth": "bearer",
       "actor": "staff",
       "roles": [
         "admin"
       ],
-      "purpose": "Send a new activation link to the registered email; earlier links stop working.",
-      "rate_limit": [
-        "5 per hour per customer"
-      ],
+      "purpose": "Forgotten PIN: remove the PIN and lift a PIN lock; the customer creates a new one in the app.",
       "request": {
         "path_params": {
-          "customer": "integer id (closed accounts return 404)"
+          "customer": "integer id"
         }
       },
-      "response": "200 {message, data:{sent_to, expires_at, mail_sent}}",
+      "response": "200 {message:'PIN direset. Nasabah membuat PIN baru di aplikasi Bank Mini.', data: Customer {id, account_number, nis, full_name, email, activation_status, activated_at, pin_set, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}} with pin_set false",
       "errors": [
-        "409 already_activated",
-        "422 email_missing",
-        "403 account_inactive",
-        "404",
-        "429"
+        "404 closed or unknown account"
       ]
     },
     {
@@ -719,20 +702,20 @@
     },
     {
       "method": "POST",
-      "path": "/api/customer/activation/complete",
+      "path": "/api/customer/activation",
       "auth": "none",
       "actor": "public",
       "roles": [],
-      "purpose": "First-time activation: bind the Firebase account to the invited customer (once) and start a session.",
+      "purpose": "First-time activation: bind the signed-in Firebase account to the customer with this NIS (once) and start a session. The customer then creates the PIN.",
       "rate_limit": [
         "20 per minute per IP"
       ],
       "request": {
         "body": {
-          "token": {
+          "nis": {
             "type": "string",
             "required": true,
-            "rules": "64 characters (invitation link)"
+            "rules": "max 20; the NIS (not the account number)"
           },
           "id_token": {
             "type": "string",
@@ -742,82 +725,20 @@
         },
         "content_type": "application/json"
       },
-      "response": "200 {data:{actor:'customer', token, token_type:'Bearer', expires_at, customer: Customer {id, account_number, nis, full_name, email, activation_status, activated_at, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}} with customer.activation_status 'activated'",
+      "response": "200 {data:{actor:'customer', token, token_type:'Bearer', expires_at, customer: Customer {id, account_number, nis, full_name, email, activation_status, activated_at, pin_set, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}} with customer.activation_status 'activated' and pin_set false",
       "errors": [
-        "404 activation_invalid",
-        "410 activation_expired",
+        "403 email_not_verified",
+        "403 activation_mismatch (unknown NIS, another email, or no registered email; one answer)",
+        "403 account_inactive",
+        "409 already_activated (bound to a different Firebase account)",
+        "409 identity_already_linked (Firebase account bound to another customer)",
         "401 firebase_token_invalid",
         "403 provider_not_allowed",
-        "403 email_not_verified (link stays usable)",
-        "403 email_mismatch {email: masked registered email} (link stays usable)",
-        "409 identity_already_linked (Firebase account bound to another customer)",
         "503 auth_unavailable",
         "422 validation",
         "429"
       ],
-      "notes": "The Firebase email must equal the registered email (case-insensitive) and be verified. Token row and customer row are locked; the link is marked used and all other links revoked. Sends an 'account activated' security email."
-    },
-    {
-      "method": "POST",
-      "path": "/api/customer/activation/inspect",
-      "auth": "none",
-      "actor": "public",
-      "roles": [],
-      "purpose": "Activation page data for an invitation link: who it is for and which email must be used.",
-      "rate_limit": [
-        "20 per minute per IP"
-      ],
-      "request": {
-        "body": {
-          "token": {
-            "type": "string",
-            "required": true,
-            "rules": "64 characters (from the link's ?token=)"
-          }
-        },
-        "content_type": "application/json"
-      },
-      "response": "200 {data:{full_name, account_number, email, expires_at, providers:['password','google.com']}}",
-      "errors": [
-        "404 activation_invalid (unknown, used, revoked, account closed or already activated)",
-        "410 activation_expired",
-        "422 validation",
-        "429"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/customer/activation/resend",
-      "auth": "none",
-      "actor": "public",
-      "roles": [],
-      "purpose": "A not-yet-activated customer requests a new invitation link, proving identity with NIS/account number + PIN. The link goes only to the registered email.",
-      "rate_limit": [
-        "5 per minute per username/identifier + IP; Firebase ID token logins 30 per minute per IP",
-        "3 per hour per identifier"
-      ],
-      "request": {
-        "body": {
-          "identifier": {
-            "type": "string",
-            "required": true,
-            "rules": "required, max 50; NIS or account number"
-          },
-          "pin": {
-            "type": "string",
-            "required": true,
-            "rules": "exactly 6 digits; shared PIN lock"
-          }
-        },
-        "content_type": "application/json"
-      },
-      "response": "200 {message, data:{email (masked), expires_at, mail_sent}}",
-      "errors": [
-        "422 wrong NIS/account number or PIN / PIN locked / closed account",
-        "403 firebase_login_required (already activated)",
-        "403 activation_required with email null (no email registered)",
-        "429"
-      ]
+      "notes": "The Firebase email must be verified and equal the registered email (case-insensitive). The customer row is locked. Repeating with the same Firebase account just signs in. No email is sent."
     },
     {
       "method": "POST",
@@ -827,7 +748,7 @@
       "roles": [],
       "purpose": "Customer login: verify a Firebase ID token (Google or email/password) and start a customer session.",
       "rate_limit": [
-        "5 per minute per username/identifier + IP; Firebase ID token logins 30 per minute per IP"
+        "5 per minute per username + IP; Firebase ID token logins 30 per minute per IP"
       ],
       "request": {
         "body": {
@@ -839,7 +760,7 @@
         },
         "content_type": "application/json"
       },
-      "response": "200 {data:{actor:'customer', token, token_type:'Bearer', expires_at, customer: Customer {id, account_number, nis, full_name, email, activation_status, activated_at, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}}",
+      "response": "200 {data:{actor:'customer', token, token_type:'Bearer', expires_at, customer: Customer {id, account_number, nis, full_name, email, activation_status, activated_at, pin_set, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}}",
       "errors": [
         "401 firebase_token_invalid (bad signature, expired, wrong project, revoked, disabled or deleted Firebase user)",
         "403 provider_not_allowed (only password and google.com)",
@@ -880,41 +801,6 @@
     },
     {
       "method": "POST",
-      "path": "/api/customer/login",
-      "auth": "none",
-      "actor": "public",
-      "roles": [],
-      "purpose": "NIS or account number + PIN check. Never issues a token: after a correct PIN it reports whether the account must be activated or use the Firebase login.",
-      "rate_limit": [
-        "5 per minute per username/identifier + IP; Firebase ID token logins 30 per minute per IP"
-      ],
-      "request": {
-        "body": {
-          "identifier": {
-            "type": "string",
-            "required": true,
-            "rules": "required, max 50; NIS or account number"
-          },
-          "pin": {
-            "type": "string",
-            "required": true,
-            "rules": "exactly 6 digits"
-          }
-        },
-        "content_type": "application/json"
-      },
-      "response": "never 200",
-      "errors": [
-        "403 {message, code:'activation_required', email: masked registered email or null} correct PIN, account not activated",
-        "403 {message, code:'firebase_login_required'} correct PIN, account activated",
-        "422 wrong NIS/account number or PIN (errors.identifier)",
-        "422 PIN locked: 'Terlalu banyak percobaan PIN salah. Coba lagi pukul HH:MM.' (shared lock; remaining attempts are not revealed before the lock)",
-        "422 closed account",
-        "429"
-      ]
-    },
-    {
-      "method": "POST",
       "path": "/api/customer/logout",
       "auth": "bearer",
       "actor": "customer",
@@ -950,7 +836,7 @@
       "purpose": "Current customer with major.",
       "ownership": "scoped to the authenticated user",
       "request": {},
-      "response": "200 {data: Customer {id, account_number, nis, full_name, email, activation_status, activated_at, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}"
+      "response": "200 {data: Customer {id, account_number, nis, full_name, email, activation_status, activated_at, pin_set, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}"
     },
     {
       "method": "POST",
@@ -986,7 +872,51 @@
       "errors": [
         "422 validation",
         "422 wrong current PIN {remaining_attempts, pin_locked_until}",
-        "422 PIN locked"
+        "422 PIN locked",
+        "422 {message, code:'pin_not_set'} the customer has not created a PIN yet"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/customer/pin/setup",
+      "auth": "bearer",
+      "actor": "customer",
+      "roles": [
+        "customer"
+      ],
+      "purpose": "Create the PIN after activation, or after an administrator reset.",
+      "rate_limit": [
+        "5 per minute per customer (unlock and PIN setup)"
+      ],
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "body": {
+          "id_token": {
+            "type": "string",
+            "required": true,
+            "rules": "fresh Firebase ID token of the account bound to this customer, max 4096"
+          },
+          "pin": {
+            "type": "string",
+            "required": true,
+            "rules": "exactly 6 digits, confirmed"
+          },
+          "pin_confirmation": {
+            "type": "string",
+            "required": true,
+            "rules": "must equal pin"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 {message:'PIN berhasil dibuat.'}",
+      "errors": [
+        "403 identity_mismatch (another Firebase account)",
+        "401 firebase_token_invalid",
+        "409 pin_already_set",
+        "422 validation",
+        "503 auth_unavailable",
+        "429"
       ]
     },
     {
@@ -1068,7 +998,7 @@
       ],
       "purpose": "Unlock the app with the PIN during an active session (no new token).",
       "rate_limit": [
-        "5 per minute per customer"
+        "5 per minute per customer (unlock and PIN setup)"
       ],
       "ownership": "scoped to the authenticated user",
       "request": {
@@ -1087,7 +1017,8 @@
         "422 PIN locked",
         "401",
         "403",
-        "429"
+        "429",
+        "422 {message, code:'pin_not_set'} the customer has not created a PIN yet"
       ]
     },
     {
@@ -1162,7 +1093,8 @@
         "422 PIN locked",
         "422 not usable in the current status {message, status}",
         "422 account not active",
-        "404"
+        "404",
+        "422 {message, code:'pin_not_set'} the customer has not created a PIN yet"
       ]
     },
     {
@@ -1212,7 +1144,7 @@
           "activation": "pending | activated"
         }
       },
-      "response": "200 paginated {data:[Customer {id, account_number, nis, full_name, email, activation_status, activated_at, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}], links, meta}; default per_page 15"
+      "response": "200 paginated {data:[Customer {id, account_number, nis, full_name, email, activation_status, activated_at, pin_set, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}], links, meta}; default per_page 15"
     },
     {
       "method": "GET",
@@ -1229,7 +1161,7 @@
           "customer": "integer id"
         }
       },
-      "response": "200 {data: Customer {id, account_number, nis, full_name, email, activation_status, activated_at, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}",
+      "response": "200 {data: Customer {id, account_number, nis, full_name, email, activation_status, activated_at, pin_set, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}",
       "errors": [
         "404"
       ]
@@ -1269,9 +1201,9 @@
       "auth": "none",
       "actor": "public",
       "roles": [],
-      "purpose": "Single login gateway for all roles. Staff send username+password; customers send a Firebase ID token (id_token). identifier+pin no longer starts a customer session.",
+      "purpose": "Single login gateway for all roles. Staff send username+password; customers send a Firebase ID token (id_token). NIS/account number + PIN is not a credential (422 like no credentials).",
       "rate_limit": [
-        "5 per minute per username/identifier + IP; Firebase ID token logins 30 per minute per IP"
+        "5 per minute per username + IP; Firebase ID token logins 30 per minute per IP"
       ],
       "request": {
         "body": {
@@ -1289,28 +1221,17 @@
             "type": "string",
             "required": false,
             "rules": "customer: Firebase ID token, max 4096"
-          },
-          "identifier": {
-            "type": "string",
-            "required": false,
-            "rules": "customer: NIS or account number, max 50 (with pin)"
-          },
-          "pin": {
-            "type": "string",
-            "required": false,
-            "rules": "exactly 6 digits (with identifier)"
           }
         },
         "content_type": "application/json"
       },
-      "response": "200 {data:{actor:'staff', token, token_type:'Bearer', user: Staff}} or (id_token) 200 {data:{actor:'customer', token, token_type:'Bearer', expires_at, customer: Customer {id, account_number, nis, full_name, email, activation_status, activated_at, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}}",
+      "response": "200 {data:{actor:'staff', token, token_type:'Bearer', user: Staff}} or (id_token) 200 {data:{actor:'customer', token, token_type:'Bearer', expires_at, customer: Customer {id, account_number, nis, full_name, email, activation_status, activated_at, pin_set, class, group, major{id,code,major_name}, account_status, balance, created_at, updated_at, deleted_at}}}",
       "errors": [
         "422 wrong staff credentials / blocked staff / missing fields",
-        "identifier+pin: see POST /api/customer/login (403 activation_required | firebase_login_required, never a token)",
         "id_token: see POST /api/customer/auth/login",
         "429"
       ],
-      "notes": "If username is filled the staff login runs; else if id_token is filled the Firebase customer login runs; else if identifier is filled the NIS+PIN check runs; else 422 on username."
+      "notes": "If username is filled the staff login runs; else if id_token is filled the Firebase customer login runs; else 422 on username."
     },
     {
       "method": "GET",
@@ -1393,7 +1314,7 @@
       "roles": [],
       "purpose": "Staff-only login (alias of POST /api/login).",
       "rate_limit": [
-        "5 per minute per username/identifier + IP; Firebase ID token logins 30 per minute per IP"
+        "5 per minute per username + IP; Firebase ID token logins 30 per minute per IP"
       ],
       "request": {
         "body": {
@@ -1673,7 +1594,7 @@
           "identifier": "required, string, max 60; 'BANKMINI:' prefix is stripped; URL-encode"
         }
       },
-      "response": "200 {data:{id, account_number, nis, full_name, class, group, major_name, account_status, balance, pin_locked_until (only while in the future)}}",
+      "response": "200 {data:{id, account_number, nis, full_name, class, group, major_name, account_status, balance, pin_locked_until (only while in the future), activation_status ('pending' | 'activated'), pin_set}}",
       "errors": [
         "404 'Nasabah tidak ditemukan.'",
         "422"
@@ -1989,7 +1910,9 @@
         "422 PIN locked {remaining_attempts:0, pin_locked_until}",
         "422 insufficient balance (minimum balance)",
         "422 no shift / shift closed / earlier shift still open",
-        "422 account not active"
+        "422 account not active",
+        "422 {message, code:'pin_not_set'} the customer has not created a PIN yet",
+        "422 {message, code:'customer_app_not_activated'} the customer has not activated the app"
       ]
     },
     {
@@ -2143,7 +2066,8 @@
         "422 wrong PIN {message, remaining_attempts, pin_locked_until}",
         "422 PIN locked",
         "422 insufficient balance (minimum balance)",
-        "422 deposit errors"
+        "422 deposit errors",
+        "422 {message, code:'pin_not_set'} the customer has not created a PIN yet"
       ]
     }
   ]

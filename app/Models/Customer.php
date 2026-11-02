@@ -13,7 +13,8 @@ class Customer extends Authenticatable
     use HasApiTokens, HasFactory, SoftDeletes;
 
     /**
-     * Customers authenticate with a 6-digit PIN instead of a password.
+     * The 6-digit PIN, created by the customer in the app after activation
+     * (null until then, and after an administrator resets it).
      */
     protected $authPasswordName = 'pin';
 
@@ -60,12 +61,17 @@ class Customer extends Authenticatable
 
     /**
      * The customer has bound a Firebase account and can log in to the app.
-     * Before that the account is "pending": it works at the counter, but the
-     * app login is not available yet.
+     * Before that the account is "pending": deposits work at the counter, but
+     * there is no app login and no PIN yet.
      */
     public function isActivated(): bool
     {
         return $this->activated_at !== null;
+    }
+
+    public function hasPin(): bool
+    {
+        return $this->pin !== null;
     }
 
     public function major()
@@ -81,10 +87,5 @@ class Customer extends Authenticatable
     public function withdrawalAuthorizations()
     {
         return $this->hasMany(WithdrawalAuthorization::class);
-    }
-
-    public function activationTokens()
-    {
-        return $this->hasMany(CustomerActivationToken::class);
     }
 }

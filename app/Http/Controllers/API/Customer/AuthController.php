@@ -2,9 +2,7 @@
 
 namespace App\Http\Controllers\API\Customer;
 
-use App\Exceptions\CustomerAuthException;
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Auth\CustomerLoginRequest;
 use App\Http\Requests\Auth\FirebaseLoginRequest;
 use App\Http\Requests\Customer\UnlockRequest;
 use App\Http\Resources\CustomerResource;
@@ -35,22 +33,8 @@ class AuthController extends Controller
     }
 
     /**
-     * NIS or account number + PIN. This no longer starts a session: after the
-     * PIN is verified (shared lock, same errors as before) the response tells
-     * the app whether to show activation or the Firebase login.
-     */
-    public function login(CustomerLoginRequest $request): JsonResponse
-    {
-        $customer = $this->auth->verifyPinCredentials($request->validated('identifier'), $request->validated('pin'));
-
-        throw $customer->isActivated()
-            ? CustomerAuthException::firebaseLoginRequired()
-            : CustomerAuthException::activationRequired($customer->email);
-    }
-
-    /**
      * Unlock the app with the PIN during a session. Wrong PINs count toward
-     * the shared PIN lock.
+     * the shared PIN lock; without a PIN yet the answer is pin_not_set.
      */
     public function unlock(UnlockRequest $request, PinService $pins): JsonResponse
     {

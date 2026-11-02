@@ -63,31 +63,21 @@ class AppServiceProvider extends ServiceProvider
             return $isValid;
         });
 
-        // A 6-digit PIN only has a million combinations, so login attempts are
-        // limited per account identifier and IP address. A Firebase ID token
-        // cannot be guessed, so those logins are only limited per IP, generously
-        // enough for a class behind one school Wi-Fi address.
+        // Staff password logins are limited per username and IP address. A
+        // Firebase ID token cannot be guessed, so customer logins are only
+        // limited per IP, generously enough for a class behind one school
+        // Wi-Fi address.
         RateLimiter::for('login', function (Request $request) {
-            if ($request->filled('id_token') && ! $request->filled('username') && ! $request->filled('identifier')) {
+            if ($request->filled('id_token') && ! $request->filled('username')) {
                 return Limit::perMinute(30)->by('firebase|'.$request->ip());
             }
 
-            $identifier = (string) ($request->input('username') ?? $request->input('identifier'));
-
-            return Limit::perMinute(5)->by(Str::lower($identifier).'|'.$request->ip());
+            return Limit::perMinute(5)->by(Str::lower((string) $request->input('username')).'|'.$request->ip());
         });
 
-        // Activation links: opening and completing them, per IP (tokens are 256-bit random, so this is about abuse, not guessing).
+        // Activation, per IP. Guessing NIS numbers gains nothing: the signed-in
+        // verified email must also be the registered one.
         RateLimiter::for('customer-activation', fn (Request $request) => Limit::perMinute(20)->by($request->ip()));
-
-        // New invitation emails: a customer asking for one (after NIS + PIN), and an administrator resending one.
-        RateLimiter::for('customer-activation-resend', fn (Request $request) => Limit::perHour(3)->by(Str::lower((string) $request->input('identifier'))));
-        RateLimiter::for('customer-invitation', function (Request $request) {
-            // Throttling runs before route model binding, so the parameter may still be the raw id.
-            $customer = $request->route('customer');
-
-            return Limit::perHour(5)->by('customer:'.(is_object($customer) ? $customer->getKey() : $customer));
-        });
 
         // Withdrawal authorizations. Named limiters keep separate counters per
         // endpoint group and actor (tellers and customers share numeric ids).

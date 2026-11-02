@@ -9,6 +9,7 @@ use App\Exceptions\AuthorizationNotUsableException;
 use App\Exceptions\CustomerAppNotActivatedException;
 use App\Exceptions\InsufficientBalanceException;
 use App\Exceptions\InvalidPinException;
+use App\Exceptions\PinNotSetException;
 use App\Models\Customer;
 use App\Models\User;
 use App\Models\WithdrawalAuthorization;
@@ -61,7 +62,11 @@ class WithdrawalAuthorizationService
 
             // Only the app can approve; without it the request could only expire.
             if (! $customer->isActivated()) {
-                throw CustomerAppNotActivatedException::forMode($this->settings->allowsTerminalWithdrawalVerification());
+                throw new CustomerAppNotActivatedException;
+            }
+
+            if (! $customer->hasPin()) {
+                throw new PinNotSetException;
             }
 
             if ($customer->pin_locked_until?->isFuture()) {

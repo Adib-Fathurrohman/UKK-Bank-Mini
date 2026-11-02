@@ -5,9 +5,10 @@ namespace App\Http\Requests\Customer;
 use Illuminate\Foundation\Http\FormRequest;
 
 /**
- * The token from an invitation link (sent in the body, not the URL, so it stays out of server logs).
+ * First-time activation: the NIS the customer types and the Firebase ID token
+ * of the account they signed in with.
  */
-class InspectActivationRequest extends FormRequest
+class ActivateRequest extends FormRequest
 {
     /**
      * Get the validation rules that apply to the request.
@@ -17,7 +18,8 @@ class InspectActivationRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'token' => ['required', 'string', 'size:64'],
+            'nis' => ['required', 'string', 'max:20'],
+            'id_token' => ['required', 'string', 'max:4096'],
         ];
     }
 }

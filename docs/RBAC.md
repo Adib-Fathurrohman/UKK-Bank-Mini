@@ -26,7 +26,7 @@ for usability.
 | Administrator | `App\Models\User` | `admin` | Created by the seeder; cannot be created, edited, blocked or deleted through the API |
 | Supervisor | `User` | `supervisor` | |
 | Teller | `User` | `teller` | Usually a student on duty (`class`, `phone` fields) |
-| Customer ("User" in the matrix below; nasabah) | `App\Models\Customer` | — (separate model) | Students; activate from an emailed invitation, then sign in with Firebase (Google or email/password); the PIN unlocks the app and approves withdrawals ([CUSTOMER_AUTH.md](CUSTOMER_AUTH.md)) |
+| Customer ("User" in the matrix below; nasabah) | `App\Models\Customer` | — (separate model) | Students; sign in with Firebase (Google or email/password), activate once with their NIS, then create their own PIN, which unlocks the app and approves withdrawals ([CUSTOMER_AUTH.md](CUSTOMER_AUTH.md)) |
 
 A staff member has exactly one role (`users.role`). Multi-role users are not
 implemented.
@@ -40,7 +40,7 @@ implemented.
 | `staff:admin,supervisor` (etc.) | `EnsureStaffRole` | As above, plus `role` must be in the list. Otherwise `403 "Peran Anda tidak memiliki akses ke fitur ini."` |
 | `customer` | `EnsureCustomer` | Token must belong to a `Customer` whose status is not `inactive`. Otherwise `403 "Fitur ini khusus untuk nasabah."` / `"Rekening ini sudah tidak aktif."` |
 | `throttle:login` | Rate limiter | 5 attempts per minute per username/identifier + IP on login routes; requests with only `id_token`: 30 per minute per IP (`429`) |
-| `throttle:customer-activation`, `customer-activation-resend`, `customer-invitation`, `customer-unlock` | Rate limiters | Activation 20/min per IP; customer resend 3/hour per identifier; admin invitation 5/hour per customer; unlock 5/min per customer (`429`) |
+| `throttle:customer-activation`, `customer-unlock` | Rate limiters | Activation 20/min per IP; unlock and PIN setup 5/min per customer (`429`) |
 | `throttle:10,1` | Rate limiter | 10 corrections per minute per teller (`429`) |
 
 The role middleware runs **before** route model binding, so a caller with the
@@ -76,10 +76,9 @@ Only capabilities that exist in the backend. "User" = customer (nasabah).
 | List / view staff | ✓ | ✓ | — | — |
 | Create, edit, block, unblock, delete, import tellers/supervisors | ✓ | — | — | — |
 | List / view customer accounts (incl. closed) | ✓ | ✓ | — | — |
-| Open account, edit, reset PIN, suspend, graduate (deactivate) | ✓ | — | — | — |
-| Send / resend the activation invitation, set the email of a pending account | ✓ | — | — | — |
-| Activate own account from the invitation (Firebase), request a new link with NIS + PIN | — | — | — | ✓ (public, proof by link / PIN) |
-| Unlock the app with own PIN; log out of all own sessions | — | — | — | ✓ |
+| Open account, edit, reset (remove) PIN, suspend, graduate (deactivate); set the email of a pending account | ✓ | — | — | — |
+| Activate own account (Firebase sign-in with the registered email + NIS) | — | — | — | ✓ (public, proof by verified email + NIS) |
+| Create own PIN (after activation, with a fresh Firebase sign-in); unlock the app with it; log out of all own sessions | — | — | — | ✓ |
 | Customer card data (QR payload) for printing | ✓ | — | — | — |
 | Customer statement PDF (any customer) | ✓ | ✓ | — | — |
 | Look up one customer by QR / account number / NIS | — | — | ✓ | — |
@@ -155,13 +154,12 @@ Notes:
 
 ## 7. Endpoint restrictions
 
-All 74 API routes (`php artisan route:list --path=api`). Prefix `/api`.
+All 72 API routes (`php artisan route:list --path=api`). Prefix `/api`.
 
 | Method | Path | Middleware (beyond `api`) |
 | --- | --- | --- |
-| POST | `/login`, `/staff/login`, `/customer/auth/login`, `/customer/login` | `throttle:login` (public) |
-| POST | `/customer/activation/inspect`, `/customer/activation/complete` | `throttle:customer-activation` (public; the invitation token is the proof) |
-| POST | `/customer/activation/resend` | `throttle:login`, `throttle:customer-activation-resend` (public; NIS + PIN is the proof) |
+| POST | `/login`, `/staff/login`, `/customer/auth/login` | `throttle:login` (public) |
+| POST | `/customer/activation` | `throttle:customer-activation` (public; the Firebase verified email + NIS are the proof) |
 | GET | `/staff/me` · POST `/staff/logout` | `auth:sanctum`, `staff` |
 | GET | `/majors`, `/settings` | `auth:sanctum`, `staff` |
 | GET | `/staff`, `/staff/{staff}` | `staff:admin,supervisor` |
@@ -173,7 +171,7 @@ All 74 API routes (`php artisan route:list --path=api`). Prefix `/api`.
 | POST | `/admin/customers` | `staff:admin` |
 | PUT/PATCH | `/admin/customers/{customer}` | `staff:admin` |
 | POST | `/admin/customers/{customer}/deactivate` | `staff:admin` |
-| POST | `/admin/customers/{customer}/invitation` | `staff:admin`, `throttle:customer-invitation` |
+| POST | `/admin/customers/{customer}/pin-reset` | `staff:admin` |
 | GET | `/admin/customers/{customer}/card` | `staff:admin` |
 | GET | `/audit/transactions`, `/audit/transactions/export`, `/audit/transactions/{transaction}` | `staff:admin,supervisor` |
 | GET | `/audit/journals`, `/audit/journals/summary`, `/audit/journals/export` | `staff:admin,supervisor` |
@@ -192,7 +190,7 @@ All 74 API routes (`php artisan route:list --path=api`). Prefix `/api`.
 | GET | `/supervisor/cash-transfers`, `/supervisor/cash-transfers/{cashTransfer}` | `staff:supervisor` |
 | GET | `/customer/me`, `/customer/balance`, `/customer/card`, `/customer/transactions`, `/customer/transactions/{transaction}`, `/customer/statement/export` | `auth:sanctum`, `customer` |
 | POST | `/customer/logout`, `/customer/logout-all`, `/customer/pin` | `auth:sanctum`, `customer` |
-| POST | `/customer/unlock` | `auth:sanctum`, `customer`, `throttle:customer-unlock` |
+| POST | `/customer/unlock`, `/customer/pin/setup` | `auth:sanctum`, `customer`, `throttle:customer-unlock` |
 | GET | `/customer/withdrawal-authorizations`, `/customer/withdrawal-authorizations/{withdrawalAuthorization}` | `auth:sanctum`, `customer`, `throttle:withdrawal-authorization-poll` + ownership |
 | POST | `/customer/withdrawal-authorizations/{withdrawalAuthorization}/approve`, `/reject` | `auth:sanctum`, `customer`, `throttle:withdrawal-authorization-decide` + ownership |
 

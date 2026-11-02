@@ -28,29 +28,22 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 | POST /login is the single entry point. The portal-specific endpoints
 | below accept the same credentials and are kept for convenience.
-| Customers sign in with a Firebase ID token (customer/auth/login);
-| NIS + PIN (customer/login) only reports whether to activate first.
+| Customers sign in with a Firebase ID token (customer/auth/login).
 */
 
 Route::middleware('throttle:login')->group(function () {
     Route::post('login', LoginController::class);
     Route::post('staff/login', [StaffAuthController::class, 'login']);
     Route::post('customer/auth/login', [CustomerAuthController::class, 'firebaseLogin']);
-    Route::post('customer/login', [CustomerAuthController::class, 'login']);
 });
 
 /*
 |--------------------------------------------------------------------------
-| Customer activation (public: the invitation link is the proof)
+| Customer activation (public: Firebase verified email + NIS are the proof)
 |--------------------------------------------------------------------------
 */
 
-Route::middleware('throttle:customer-activation')->prefix('customer/activation')->group(function () {
-    Route::post('inspect', [CustomerActivationController::class, 'show']);
-    Route::post('complete', [CustomerActivationController::class, 'complete']);
-});
-Route::post('customer/activation/resend', [CustomerActivationController::class, 'resend'])
-    ->middleware(['throttle:login', 'throttle:customer-activation-resend']);
+Route::post('customer/activation', CustomerActivationController::class)->middleware('throttle:customer-activation');
 
 /*
 |--------------------------------------------------------------------------
@@ -78,7 +71,7 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
         Route::post('customers', [CustomerController::class, 'store']);
         Route::match(['put', 'patch'], 'customers/{customer}', [CustomerController::class, 'update']);
         Route::post('customers/{customer}/deactivate', [CustomerController::class, 'deactivate']);
-        Route::post('customers/{customer}/invitation', [CustomerController::class, 'invite'])->middleware('throttle:customer-invitation');
+        Route::post('customers/{customer}/pin-reset', [CustomerController::class, 'resetPin']);
         Route::get('customers/{customer}/card', [CustomerController::class, 'card']);
     });
 
@@ -161,6 +154,7 @@ Route::middleware(['auth:sanctum', 'customer'])->prefix('customer')->group(funct
 
     Route::get('balance', [CustomerAccountController::class, 'balance']);
     Route::get('card', [CustomerAccountController::class, 'card']);
+    Route::post('pin/setup', [CustomerAccountController::class, 'setUpPin'])->middleware('throttle:customer-unlock');
     Route::post('pin', [CustomerAccountController::class, 'changePin']);
     Route::get('transactions', [CustomerAccountController::class, 'transactions']);
     Route::get('statement/export', [CustomerAccountController::class, 'statement']);

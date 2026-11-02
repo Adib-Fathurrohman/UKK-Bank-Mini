@@ -8,14 +8,13 @@ use App\Http\Requests\Admin\UpdateCustomerRequest;
 use App\Http\Resources\CustomerCardResource;
 use App\Http\Resources\CustomerResource;
 use App\Models\Customer;
-use App\Services\CustomerActivationService;
 use App\Services\CustomerService;
 use App\Services\PdfReportService;
+use App\Services\PinService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -24,10 +23,8 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class CustomerController extends Controller
 {
-    public function __construct(
-        private CustomerService $customers,
-        private CustomerActivationService $activation,
-    ) {
+    public function __construct(private CustomerService $customers)
+    {
     }
 
     public function index(Request $request): AnonymousResourceCollection
@@ -59,16 +56,15 @@ class CustomerController extends Controller
     }
 
     /**
-     * Open the account and email the activation link. The account exists even
-     * if sending fails ("invitation.mail_sent": false); the administrator can
-     * then resend it.
+     * Open the account. It starts "pending": the student activates the app by
+     * signing in with the registered email and entering their NIS, then
+     * creates their own PIN.
      */
     public function store(StoreCustomerRequest $request): CustomerResource
     {
         $customer = $this->customers->create($request->validated());
-        $invitation = $this->activation->invite($customer, $request->user());
 
-        return (new CustomerResource($customer->load('major')))->additional(['invitation' => $invitation]);
+        return new CustomerResource($customer->load('major'));
     }
 
     public function show(Customer $customer): CustomerResource
@@ -78,37 +74,22 @@ class CustomerController extends Controller
 
     public function update(UpdateCustomerRequest $request, Customer $customer): CustomerResource
     {
-        $data = $request->validated();
-
-        // A PIN reset by the administrator also lifts a lock from wrong attempts.
-        if (array_key_exists('pin', $data)) {
-            $data += ['pin_failed_attempts' => 0, 'pin_locked_until' => null];
-        }
-
-        DB::transaction(function () use ($customer, $data) {
-            $customer->update($data);
-
-            // Links sent to the old address stop working; send a new invitation to the new one.
-            if ($customer->wasChanged('email')) {
-                $this->activation->revokeOutstanding($customer);
-            }
-        });
+        $customer->update($request->validated());
 
         return new CustomerResource($customer->load('major'));
     }
 
     /**
-     * Send a new activation link to the registered email. Earlier links stop working.
+     * Forgotten PIN: remove it (and any lock) so the customer creates a new
+     * one in the app, after signing in with their Firebase account again.
      */
-    public function invite(Request $request, Customer $customer): JsonResponse
+    public function resetPin(Customer $customer, PinService $pins): JsonResponse
     {
-        $invitation = $this->activation->invite($customer, $request->user());
+        $pins->reset($customer);
 
         return response()->json([
-            'message' => $invitation['mail_sent']
-                ? 'Tautan aktivasi baru telah dikirim.'
-                : 'Tautan aktivasi dibuat, tetapi email gagal dikirim. Periksa konfigurasi email lalu kirim ulang.',
-            'data' => $invitation,
+            'message' => 'PIN direset. Nasabah membuat PIN baru di aplikasi Bank Mini.',
+            'data' => new CustomerResource($customer->load('major')),
         ]);
     }
 

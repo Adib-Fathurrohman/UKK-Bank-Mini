@@ -57,4 +57,3 @@ app gets its bundle identifiers.
 |---|---|
 | `FIREBASE_PROJECT_ID` | `bank-mini-rumput` |
 | `FIREBASE_CREDENTIALS` | `storage/app/private/firebase-credentials.json` (service account `firebase-adminsdk-fbsvc@bank-mini-rumput.iam.gserviceaccount.com`; git-ignored, never in the app) |
-| `CUSTOMER_ACTIVATION_URL` | local: `http://localhost:8081/aktivasi`; production: `https://app.rumput.tech/aktivasi` |

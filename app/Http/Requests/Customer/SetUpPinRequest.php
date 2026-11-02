@@ -5,10 +5,10 @@ namespace App\Http\Requests\Customer;
 use Illuminate\Foundation\Http\FormRequest;
 
 /**
- * The invitation token plus the Firebase ID token of the account the customer
- * signed in with (Google, or a new email/password account with a verified email).
+ * The customer's first PIN (or a new one after an administrator reset),
+ * together with a fresh Firebase ID token as re-authentication.
  */
-class CompleteActivationRequest extends FormRequest
+class SetUpPinRequest extends FormRequest
 {
     /**
      * Get the validation rules that apply to the request.
@@ -18,8 +18,8 @@ class CompleteActivationRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'token' => ['required', 'string', 'size:64'],
             'id_token' => ['required', 'string', 'max:4096'],
+            'pin' => ['required', 'string', 'digits:6', 'confirmed'],
         ];
     }
 }

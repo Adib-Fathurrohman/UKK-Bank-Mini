@@ -81,32 +81,36 @@ Common requirements for every page:
 - **Purpose:** browse accounts.
 - **Data / endpoints:** `GET /customers` with `search`, `major_id` (from
   `GET /majors`), `class`, `group`, `status`, `activation` (`pending`/`activated`),
-  `trashed`. Show `activation_status`.
+  `trashed`. Show `activation_status` and `pin_set`.
 - **Actions:** open detail, create.
 
 ### Customer detail
 - **Data / endpoints:** `GET /customers/{id}` (closed accounts too). History via
   `GET /audit/transactions?customer_id={id}`. Statement PDF
   `GET /customers/{id}/statement?from=&to=`.
-- **Actions:** edit, reset PIN, suspend/activate, print card, deactivate, resend the
-  activation invitation (`POST /admin/customers/{id}/invitation`, pending accounts with an
-  email).
+- **Actions:** edit, reset PIN (`POST /admin/customers/{id}/pin-reset`, a button with a
+  confirmation; no PIN input), suspend/activate, print card, deactivate.
 - **States:** closed account (`deleted_at` set): read-only; `activation_status`
-  pending/activated with `activated_at`; no email yet (ask to add one before inviting).
+  pending/activated with `activated_at`; `pin_set` ("PIN belum dibuat"); no email yet (ask
+  to add one: the student cannot activate the app without it).
 
 ### Open account
 - **Endpoints:** `GET /majors`, `POST /admin/customers` (nis, full_name, email, class,
-  major_id, group, pin).
+  major_id, group). **No PIN field**: the student creates the PIN in the app.
 - **States:** field errors (including a duplicate email); success shows the generated
-  account number and whether the invitation email was sent (`invitation.mail_sent`; if
-  `false`, offer "kirim ulang undangan").
+  account number and the next steps for the student: install the app, sign in with the
+  registered email, enter the NIS, create a PIN.
 
-### Edit account / reset PIN / suspend
+### Edit account / suspend
 - **Endpoint:** `PATCH /admin/customers/{id}` (any of nis, full_name, email, class,
-  major_id, group, `account_status` active/suspended, pin).
-- **Notes:** a new PIN also clears a PIN lock; account number and balance are not
-  editable; the email is editable only while activation is pending (changing it cancels
-  earlier invitation links, so resend afterwards).
+  major_id, group, `account_status` active/suspended). No PIN field.
+- **Notes:** account number and balance are not editable; the email is editable only
+  while activation is pending (e.g. to fix a typo before the student activates).
+
+### Reset PIN
+- **Endpoint:** `POST /admin/customers/{id}/pin-reset` (no body).
+- **Notes:** removes the PIN and any lock; the student creates a new one in the app.
+  Until then the customer cannot withdraw.
 
 ### Print customer card
 - **Endpoint:** `GET /admin/customers/{id}/card`.
@@ -210,25 +214,25 @@ Common requirements for every page:
   - QR scan via camera (`webcam`), keyboard-wedge scanner input (`usb`), or manual
     entry (`disabled`), always with a manual fallback field;
   - customer panel: name, account number, NIS, class/major, status, balance, PIN lock,
-    and whether the customer app is activated (`activation_status`);
+    whether the customer app is activated (`activation_status`) and has a PIN
+    (`pin_set`);
   - amount input (integer, **multiples of 100**, ≤ 100,000,000);
   - withdrawal pre-check: `balance − amount ≥ min_balance` before sending the request
     (or showing the PIN pad in terminal mode);
   - confirmation dialog summarizing type, account, name, amount (and amount in words);
   - withdrawal, `mobile` mode: "send to the customer's app" instead of a PIN pad (see
-    *Withdrawal approval*); only for `activation_status = activated` (a `pending` customer
-    cannot approve: disable the button and say the app is not activated yet);
+    *Withdrawal approval*);
   - withdrawal, `terminal` mode: customer PIN pad (masked, cleared after each attempt;
-    show `remaining_attempts` / lock time); in `both` mode offer both, but only the PIN
-    pad for a `pending` customer;
+    show `remaining_attempts` / lock time); in `both` mode offer both;
+  - no withdrawal at all (any mode) when `activation_status = pending` ("Nasabah belum
+    mengaktifkan aplikasi") or `pin_set = false` ("Nasabah belum membuat PIN");
   - `Idempotency-Key` per confirmed submission, reused on retry; submit disabled while
     pending;
   - keyboard operation (Enter to confirm) as requested in the interview.
 - **States:** shift not open → counter disabled; account `suspended` → transactions
-  disabled; PIN locked → withdraw disabled; app not activated → mobile withdrawal
-  disabled (in `mobile` mode no withdrawal at all; in `both` mode PIN pad only); `422`
-  business message (`code: customer_app_not_activated` if the status changed after the
-  lookup); success with new balance and receipt option.
+  disabled; PIN locked → withdraw disabled; app not activated or no PIN → withdraw
+  disabled; `422` business message (`code: customer_app_not_activated` or `pin_not_set`
+  if the state changed after the lookup); success with new balance and receipt option.
 - **Permissions:** teller.
 
 ### Withdrawal approval (waiting screen)
@@ -276,32 +280,41 @@ Common requirements for every page:
 
 ## Mobile User (customer, React Native + Expo)
 
-Full client contract for these screens: [FRONTEND_HANDOFF.md §15.10](FRONTEND_HANDOFF.md#1510-customer-activation-login-unlock-and-password-firebase).
+Full client contract for these screens: [FRONTEND_HANDOFF.md §15.10](FRONTEND_HANDOFF.md#1510-customer-activation-pin-login-unlock-and-password-firebase).
 
-### Activation (from the invitation email)
-- **Endpoints:** `POST /customer/activation/inspect` (`token` from the link), Firebase
-  sign-in (Google, or create a password for the registered email and verify it),
-  `POST /customer/activation/complete` (`token`, `id_token`).
-- **Data:** name, account number, registered email (read-only), link expiry.
-- **States:** invalid/used link, expired link (offer a new link via NIS + PIN →
-  `POST /customer/activation/resend`), waiting for email verification, wrong Google
-  account (`email_mismatch`), account already linked elsewhere, Firebase unavailable.
-
-### Login
-- **Endpoints:** Firebase sign-in (Google or email/password), then
+### Sign-in
+- **Endpoints:** Firebase sign-in (Google, or email/password: sign in or create an
+  account, then verify the email through Firebase's email), then
   `POST /customer/auth/login` (`id_token`).
-- **States:** wrong email/password (one generic message), `account_not_linked`
-  (activate from the email; offer a new link), `email_not_verified`, `account_inactive`,
-  `503`, `429`; refuse `actor: "staff"`.
+- **States:** wrong email/password (one generic message), waiting for email
+  verification, `account_not_linked` (first time → Activation), `email_not_verified`,
+  `account_inactive`, `503`, `429`; refuse `actor: "staff"`; `customer.pin_set = false` →
+  Create PIN.
 - **Storage:** token and `expires_at` in `expo-secure-store`.
-- **Note:** NIS + PIN does not sign in. If offered as a hint, `POST /customer/login`
-  answers `activation_required` or `firebase_login_required`.
+- **Note:** NIS + PIN does not sign in.
+
+### Activation (first sign-in)
+- **Endpoint:** `POST /customer/activation` (`nis`, `id_token`).
+- **Data:** the signed-in email (read-only) and an NIS field.
+- **States:** `activation_mismatch` (NIS and email do not match: check the NIS or sign in
+  with the registered email), `already_activated` (activated with another account),
+  `identity_already_linked`, `email_not_verified`, `account_inactive`, Firebase
+  unavailable. Success → Create PIN.
+
+### Create PIN
+- **Endpoint:** `POST /customer/pin/setup` (`id_token` fresh from Firebase, `pin`,
+  `pin_confirmation`).
+- **When:** right after activation, and whenever `pin_set` is false (after an
+  administrator reset).
+- **States:** validation (6 digits, confirmed), `identity_mismatch` (sign in again),
+  `pin_already_set` (go to unlock), `401` Firebase token expired (sign in again).
 
 ### PIN unlock
 - **Endpoint:** `POST /customer/unlock` (`pin`, 6-digit numeric keypad).
 - **When:** app start or return from background while the session is valid.
 - **States:** wrong PIN with `remaining_attempts`; lock message with unlock time (3
-  wrong PINs anywhere); `401` → session over → Firebase sign-in.
+  wrong PINs anywhere); `422 pin_not_set` → Create PIN; `401` → session over → Firebase
+  sign-in.
 
 ### Forgot / change password
 - **Functions:** Firebase `sendPasswordResetEmail` (always the same confirmation text);
@@ -363,9 +376,10 @@ Full client contract for these screens: [FRONTEND_HANDOFF.md §15.10](FRONTEND_H
 ## Not supported by the API (do not build)
 
 - Staff "change my password" or profile editing; any admin-account management.
-- Staff forgot password; forgot PIN (an administrator resets it). Customer passwords are
-  reset through Firebase in the app.
-- Customer self-registration (accounts come from the administrator and the invitation).
+- Staff forgot password; self-service forgot PIN (an administrator resets it, then the
+  student creates a new one). Customer passwords are reset through Firebase in the app.
+- Customer self-registration (accounts come from the administrator; the student only
+  activates them).
 - Customer-initiated transfers or payments; starting deposits/withdrawals from the
   mobile app (the app only approves or rejects a teller's withdrawal request).
 - Restoring closed accounts; major management.

@@ -30,7 +30,8 @@ class UpdateCustomerRequest extends FormRequest
             'major_id' => ['sometimes', 'integer', 'exists:majors,id'],
             'group' => ['sometimes', 'in:1,2,3,4'],
             'account_status' => ['sometimes', Rule::enum(AccountStatus::class)->only([AccountStatus::ACTIVE, AccountStatus::SUSPENDED])],
-            'pin' => ['sometimes', 'string', 'digits:6'],
+            // Only the customer sets a PIN; POST /admin/customers/{id}/pin-reset removes it.
+            'pin' => ['prohibited'],
         ];
     }
 
@@ -48,6 +49,14 @@ class UpdateCustomerRequest extends FormRequest
                 }
             },
         ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return ['pin.prohibited' => 'PIN dibuat oleh nasabah di aplikasi Bank Mini. Gunakan reset PIN jika nasabah lupa PIN.'];
     }
 
     protected function prepareForValidation(): void

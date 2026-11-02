@@ -15,10 +15,8 @@ use Illuminate\Support\Facades\Log;
 
 class CustomerService
 {
-    public function __construct(
-        private FirebaseAuth $firebase,
-        private CustomerActivationService $activation,
-    ) {
+    public function __construct(private FirebaseAuth $firebase)
+    {
     }
 
     /**
@@ -43,14 +41,13 @@ class CustomerService
      * Close the account of a graduated student (FR-Rek-03).
      *
      * The row is kept (soft delete) so its transactions and journals stay intact.
-     * All app sessions and invitation links end.
+     * All app sessions end.
      */
     public function deactivate(Customer $customer): Customer
     {
         DB::transaction(function () use ($customer) {
             $customer->update(['account_status' => AccountStatus::INACTIVE]);
             $customer->tokens()->delete();
-            $this->activation->revokeOutstanding($customer);
             $customer->delete();
         });
 

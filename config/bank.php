@@ -83,19 +83,4 @@ return [
 
     'customer_session_minutes' => (int) env('CUSTOMER_SESSION_MINUTES', 43200),
 
-    /*
-    |--------------------------------------------------------------------------
-    | Customer Activation
-    |--------------------------------------------------------------------------
-    |
-    | Invitation links are valid for this many hours. The link is
-    | "{customer_activation_url}?token=...", so point it at the page of the
-    | customer app that handles activation.
-    |
-    */
-
-    'activation_token_hours' => (int) env('CUSTOMER_ACTIVATION_TOKEN_HOURS', 24),
-
-    'customer_activation_url' => env('CUSTOMER_ACTIVATION_URL', 'http://localhost:8081/aktivasi'),
-
 ];

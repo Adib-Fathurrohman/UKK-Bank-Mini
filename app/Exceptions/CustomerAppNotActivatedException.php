@@ -6,19 +6,17 @@ use Illuminate\Http\JsonResponse;
 
 /**
  * A withdrawal approval request for a customer who has not activated the
- * customer app: nobody could approve it, so it would only expire. The code
- * lets the teller screen show its own hint.
+ * customer app: nobody could approve it, so it would only expire. Such a
+ * customer has no PIN yet either, so no withdrawal is possible at all. The
+ * code lets the teller screen show its own hint.
  */
 class CustomerAppNotActivatedException extends BankingException
 {
     public const CODE = 'customer_app_not_activated';
 
-    public static function forMode(bool $terminalAvailable): self
+    public function __construct()
     {
-        return new self('Nasabah belum mengaktifkan aplikasi Bank Mini, sehingga tidak dapat menyetujui penarikan melalui aplikasi. '
-            .($terminalAvailable
-                ? 'Lakukan penarikan dengan PIN nasabah di terminal loket.'
-                : 'Minta nasabah menyelesaikan aktivasi melalui tautan di email undangan terlebih dahulu.'));
+        parent::__construct('Nasabah belum mengaktifkan aplikasi Bank Mini, sehingga belum dapat melakukan penarikan. Minta nasabah mengaktifkan akun di aplikasi dan membuat PIN terlebih dahulu.');
     }
 
     public function render(): JsonResponse

@@ -92,16 +92,17 @@ test('deposits do not need a PIN', function () {
     $this->postJson('/api/teller/deposits', ['account_number' => 'RPL-2026-001', 'amount' => 5000])->assertCreated();
 });
 
-test('an administrator PIN reset lifts the lock', function () {
+test('an administrator PIN reset lifts the lock and removes the PIN until the customer creates a new one', function () {
     foreach (range(1, 3) as $attempt) {
         withdrawWithPin('000000');
     }
     actingAsStaff(UserRoles::ADMIN);
 
-    $this->patchJson("/api/admin/customers/{$this->customer->id}", ['pin' => '654321'])->assertOk();
+    $this->postJson("/api/admin/customers/{$this->customer->id}/pin-reset")->assertOk();
 
     Sanctum::actingAs($this->teller);
-    withdrawWithPin('654321')->assertCreated();
+    withdrawWithPin('123456')->assertUnprocessable()->assertJsonPath('code', 'pin_not_set');
+    expect($this->customer->fresh()->pin_locked_until)->toBeNull();
 });
 
 /*
@@ -116,12 +117,6 @@ test('a customer changes their PIN with the current one', function () {
     $this->postJson('/api/customer/pin', ['current_pin' => '123456', 'new_pin' => '246810', 'new_pin_confirmation' => '246810'])
         ->assertOk()
         ->assertJsonPath('message', 'PIN berhasil diubah.');
-
-    $this->app['auth']->forgetGuards();
-    // The new PIN is accepted at login (which then asks for activation instead of issuing a token).
-    $this->postJson('/api/customer/login', ['identifier' => '20260001', 'pin' => '246810'])
-        ->assertForbidden()
-        ->assertJsonPath('code', 'activation_required');
 
     Sanctum::actingAs($this->teller);
     withdrawWithPin('123456')->assertUnprocessable();

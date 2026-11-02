@@ -23,23 +23,21 @@ test('customers log in through the single gateway with a Firebase ID token', fun
         ->assertJsonPath('data.customer.id', $customer->id);
 });
 
-test('NIS and PIN through the gateway only report that activation is needed', function () {
-    Customer::factory()->create(['nis' => '20260001', 'pin' => '123456']);
+test('NIS and PIN are not login credentials', function () {
+    $customer = Customer::factory()->create(['nis' => '20260001']);
 
     $this->postJson('/api/login', ['identifier' => '20260001', 'pin' => '123456'])
-        ->assertForbidden()
-        ->assertJsonPath('code', 'activation_required')
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['username' => 'Isi username dan password (staf), atau masuk dengan akun Google/email (nasabah).'])
         ->assertJsonMissingPath('data.token');
+
+    expect($customer->tokens()->count())->toBe(0);
 });
 
 test('the gateway validates each kind of credentials', function () {
     $this->postJson('/api/login', ['username' => 'spv'])
         ->assertUnprocessable()
         ->assertJsonValidationErrors('password');
-
-    $this->postJson('/api/login', ['identifier' => '20260001', 'pin' => '12'])
-        ->assertUnprocessable()
-        ->assertJsonValidationErrors('pin');
 
     $this->postJson('/api/login', [])
         ->assertUnprocessable()

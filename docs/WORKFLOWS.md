@@ -31,13 +31,13 @@ examples are in [API.md](API.md).
 
 | | |
 | --- | --- |
-| Actor | Customer with an invitation email |
-| Preconditions | Admin created the account with an email (3.1) or resent the invitation; link unused, not revoked, not older than 24 h; account not closed or already activated |
-| User action | Opens the link; signs in with Google, or creates an email/password Firebase account and verifies the email |
-| Backend operation | `POST /customer/activation/inspect {token}` (page data) → `POST /customer/activation/complete {token, id_token}` → link checked → Firebase ID token verified (Admin SDK: signature, project, provider, disabled, revoked) → in one DB transaction with the link and customer rows locked: link usable, email verified, Firebase email = registered email, UID not bound elsewhere → bind |
-| Database effect | `customers.firebase_uid`, `email_verified_at`, `activated_at` set; link `used_at` set; other links revoked; Sanctum token inserted (expires after `CUSTOMER_SESSION_MINUTES`) |
-| API response | `200 {data:{actor:"customer", token, token_type, expires_at, customer}}`; "account activated" email sent |
-| Failure cases | `404 activation_invalid`, `410 activation_expired`, `401 firebase_token_invalid`, `403 email_not_verified / email_mismatch / provider_not_allowed`, `409 identity_already_linked`, `503 auth_unavailable`, `429` |
+| Actor | Customer whose account the admin created with their email (3.1) |
+| Preconditions | Account not closed; not activated yet (or activated with this same Firebase account); registered email equals the Firebase account's verified email |
+| User action | Signs in to the app with Google, or with email/password (Firebase sends the verification email; the customer clicks it); the login answers `account_not_linked`; enters the NIS |
+| Backend operation | `POST /customer/activation {nis, id_token}` → Firebase ID token verified (Admin SDK: signature, project, provider, disabled, revoked) → email verified → in one DB transaction with the customer row locked: customer with this NIS has this email (else one generic `activation_mismatch`), not closed, not bound to another UID, UID not bound elsewhere → bind |
+| Database effect | `customers.firebase_uid`, `email_verified_at`, `activated_at` set; Sanctum token inserted (expires after `CUSTOMER_SESSION_MINUTES`). No email is sent |
+| API response | `200 {data:{actor:"customer", token, token_type, expires_at, customer}}` with `customer.pin_set: false` → the app continues with 1.1e |
+| Failure cases | `403 email_not_verified / activation_mismatch / account_inactive / provider_not_allowed`, `409 already_activated / identity_already_linked`, `401 firebase_token_invalid`, `503 auth_unavailable`, `429` |
 
 **1.1b Customer login**
 
@@ -51,16 +51,18 @@ examples are in [API.md](API.md).
 | API response | `200 {data:{actor:"customer", token, token_type, expires_at, customer}}` |
 | Failure cases | `401 firebase_token_invalid`, `403 account_not_linked / email_not_verified / account_inactive / provider_not_allowed`, `503`, `429` |
 
-**1.1c NIS/account number + PIN** (`POST /customer/login`, or `/login` with
-`identifier`): PIN checked through `PinService` (shared lock; wrong PIN increments
-`pin_failed_attempts`, 3rd → `pin_locked_until` = now + 15 min; correct resets it). Never
-creates a token: after a correct PIN `403 activation_required` (masked email) or
-`403 firebase_login_required`. Failures as before: `422` wrong identifier/PIN (remaining
-attempts not revealed), `422` locked, `429`. A pending customer can request a new link
-with the same credentials: `POST /customer/activation/resend` (3/hour).
+**1.1c NIS/account number + PIN:** not a login. `/login` with `identifier` + `pin`
+answers `422` (no credentials); `POST /customer/login` no longer exists.
 
 **1.1d App unlock:** `POST /customer/unlock {pin}` during a session; PIN through
-`PinService` (shared lock). `200`, or `422` with `remaining_attempts`/`pin_locked_until`.
+`PinService` (shared lock). `200`, or `422` with `remaining_attempts`/`pin_locked_until`,
+or `422 pin_not_set` before the customer has created a PIN.
+
+**1.1e Create the PIN:** `POST /customer/pin/setup {id_token, pin, pin_confirmation}`
+during a session, right after activation or after an admin reset. The ID token must be a
+fresh one of the Firebase account bound to the customer (`403 identity_mismatch`
+otherwise); refused with `409 pin_already_set` if a PIN exists. Stores the bcrypt hash,
+resets the PIN counter and lock. `201 {"message": "PIN berhasil dibuat."}`.
 
 **1.2 Logout:** `POST /staff/logout` or `/customer/logout` deletes the current token
 row. `200 {"message":"Berhasil keluar."}`. `POST /customer/logout-all` deletes all of the
@@ -94,32 +96,32 @@ Failure: `401`, `403`.
 | --- | --- |
 | Actor | Admin |
 | Preconditions | Major exists (`GET /majors`) |
-| User action | Fills NIS, name, email, class, major, group, initial PIN |
-| Backend operation | `POST /admin/customers` → `CustomerService::create` generates `{CODE}-{YEAR}-{NNN}` (school year July–June, serial per major and year, including closed accounts), retries up to 3 times on a duplicate-number race → `CustomerActivationService::invite` creates a 24-hour single-use link (hash stored) and emails it (SMTP) after commit |
-| Validation | `nis` unique (incl. closed), `email` valid and unique (case-insensitive), class `X/XI/XII`, group `1–4`, major exists, PIN 6 digits |
-| Database effect | Inserts `customers` row: status `active`, balance 0, PIN hashed, `activated_at` null (pending); inserts `customer_activation_tokens` row |
-| API response | `201` Customer + `invitation {sent_to, expires_at, mail_sent}` |
-| Failure cases | `422` validation; `403` non-admin. A mail failure gives `mail_sent: false`, not an error |
+| User action | Fills NIS, name, email, class, major, group (no PIN), then tells the student to install the app, sign in with that email, enter the NIS and create a PIN |
+| Backend operation | `POST /admin/customers` → `CustomerService::create` generates `{CODE}-{YEAR}-{NNN}` (school year July–June, serial per major and year, including closed accounts), retries up to 3 times on a duplicate-number race. No email is sent |
+| Validation | `nis` unique (incl. closed), `email` valid and unique (case-insensitive), class `X/XI/XII`, group `1–4`, major exists; `pin` prohibited |
+| Database effect | Inserts `customers` row: status `active`, balance 0, `pin` null, `activated_at` null (pending) |
+| API response | `201` Customer (`activation_status: pending`, `pin_set: false`) |
+| Failure cases | `422` validation (including a sent `pin`); `403` non-admin |
 
-**3.1a Resend the invitation:** `POST /admin/customers/{id}/invitation` revokes earlier
-links and emails a new one. `409 already_activated`, `422 email_missing`, `404` closed,
-`429` after 5 per hour per customer.
-
-**3.2 Edit / suspend / reset PIN**
+**3.2 Edit / suspend**
 
 | | |
 | --- | --- |
 | Actor | Admin |
 | Preconditions | Account not closed (closed accounts give `404`) |
-| User action | Changes NIS, name, email (pending accounts only), class, major, group, status (`active`/`suspended`) or sets a new PIN |
-| Backend operation | `PATCH /admin/customers/{id}`; if `pin` is present, also resets `pin_failed_attempts` and `pin_locked_until`; if the email changed, outstanding activation links are revoked |
-| Validation | Partial; NIS and email unique ignoring self; status only `active`/`suspended`; email cannot change after activation |
+| User action | Changes NIS, name, email (pending accounts only), class, major, group or status (`active`/`suspended`) |
+| Backend operation | `PATCH /admin/customers/{id}` |
+| Validation | Partial; NIS and email unique ignoring self; status only `active`/`suspended`; email cannot change after activation; `pin` prohibited |
 | Database effect | Updates `customers`. Account number and balance never change (changing the major does not change the account number) |
 | API response | `200` Customer |
 | Failure cases | `422` (e.g. `account_status: inactive`); `404`; `403` |
 
 Suspending does not revoke the customer's tokens (suspended customers may still log in
 and view).
+
+**3.2a Reset a forgotten PIN:** `POST /admin/customers/{id}/pin-reset` sets `pin` to null
+and clears `pin_failed_attempts` / `pin_locked_until`. `200` Customer (`pin_set: false`).
+The customer creates a new PIN in the app (1.1e); until then no withdrawal is possible.
 
 **3.3 Graduate (close) an account**
 
@@ -128,9 +130,9 @@ and view).
 | Actor | Admin |
 | Preconditions | Account not already closed |
 | User action | Confirms deactivation |
-| Backend operation | `POST /admin/customers/{id}/deactivate` → in one DB transaction: status `inactive`, delete all customer tokens, revoke activation links, soft delete → then disable the Firebase user and revoke its refresh tokens (best effort; a failure is logged, the deactivation stands) |
+| Backend operation | `POST /admin/customers/{id}/deactivate` → in one DB transaction: status `inactive`, delete all customer tokens, soft delete → then disable the Firebase user and revoke its refresh tokens (best effort; a failure is logged, the deactivation stands) |
 | Validation | None (no balance check) |
-| Database effect | `customers.account_status = inactive`, `deleted_at` set; tokens deleted; links revoked. Transactions and journals untouched |
+| Database effect | `customers.account_status = inactive`, `deleted_at` set; tokens deleted. Transactions and journals untouched |
 | API response | `200` Customer with `deleted_at` |
 | Failure cases | `404` already closed; `403` |
 
@@ -194,7 +196,7 @@ Details and the security design: [PIN_VERIFICATION.md](PIN_VERIFICATION.md).
 | | |
 | --- | --- |
 | Actor | Teller (creates and completes), customer (approves in the app with their PIN) |
-| Preconditions | As deposit; mode `mobile`/`both`; account `active`; PIN not locked; balance − amount ≥ minimum balance; no open request of this teller and none for this customer |
+| Preconditions | As deposit; mode `mobile`/`both`; account `active`; app activated (`422 customer_app_not_activated`); PIN created (`422 pin_not_set`) and not locked; balance − amount ≥ minimum balance; no open request of this teller and none for this customer |
 | User action | Teller enters the amount and sends the request → customer opens the app, checks amount, teller and balance after, enters the PIN (or rejects) → teller sees "approved" and completes |
 | Backend operation | 1. `POST /teller/withdrawal-authorizations`: DB transaction locking teller, shift, customer; pre-checks; insert `pending` row (`expires_at` = now + 120 s). 2. `POST /customer/withdrawal-authorizations/{id}/approve`: `PinService::verify` (own DB transaction), then compare-and-set `pending → approved` (`approval_expires_at` = now + 120 s). 3. `POST /teller/withdrawal-authorizations/{id}/complete`: one DB transaction locking teller, shift, the request (must be `approved`, unexpired, same shift), customer; balance −= amount; insert transaction; `approved → consumed` with `transaction_id`; journal |
 | Validation | `account_number`, `amount` as deposit; `pin` exactly 6 digits on approve |
@@ -212,7 +214,7 @@ scheduled `bank:expire-withdrawal-authorizations`, every minute).
 | | |
 | --- | --- |
 | Actor | Teller, with the customer typing the PIN |
-| Preconditions | As deposit; mode `terminal`/`both`; PIN not locked; balance − amount ≥ minimum balance |
+| Preconditions | As deposit; mode `terminal`/`both`; PIN created by the customer (`422 pin_not_set` otherwise, so a customer who has not activated the app cannot withdraw) and not locked; balance − amount ≥ minimum balance |
 | User action | Enters amount; customer types the 6-digit PIN on the confirmation screen |
 | Backend operation | `POST /teller/withdrawals` → mode check → idempotency replay check → **PIN verification first** (own DB transaction: lock customer, check lock, compare hash, update counter) → then the same transaction as a deposit with balance −= amount and the minimum-balance check |
 | Validation | Deposit rules + `pin` exactly 6 digits |
@@ -334,7 +336,8 @@ API. Majors cannot be managed through the API.
 
 | Workflow | Endpoint | Behavior |
 | --- | --- | --- |
-| Activation (first time) | `POST /customer/activation/inspect`, `/complete` | See 1.1a |
+| Activation (first time) | `POST /customer/activation` `{nis, id_token}` | See 1.1a |
+| Create PIN | `POST /customer/pin/setup` `{id_token, pin, pin_confirmation}` | See 1.1e |
 | Login | `POST /customer/auth/login` `{id_token}` | See 1.1b; suspended accounts may log in |
 | Unlock | `POST /customer/unlock` `{pin}` | See 1.1d |
 | Overview | `GET /customer/balance` | `account_number`, `full_name`, `account_status`, `balance`, `min_balance`, `as_of` |
@@ -362,8 +365,8 @@ withdrawal a teller started for their account.
 - Partial corrections; editing or deleting transactions.
 - Bulk approval; delegating approval.
 - Cash movement from the vault to tellers.
-- PIN reset by the user (admin only); staff password reset or self-service change; managing admin accounts. (Customer passwords are reset and changed in Firebase by the client.)
+- PIN reset by the user (an admin removes it; the customer then creates a new one); staff password reset or self-service change; managing admin accounts. (Customer passwords are reset and changed in Firebase by the client.)
 - Major management; multi-role users; attendance integration.
-- Notifications (push, WhatsApp) and transaction emails; withdrawal requests are delivered by polling. (Only the invitation and "account activated" emails exist.)
+- Notifications (push, WhatsApp) and transaction emails; withdrawal requests are delivered by polling. (The backend sends no email at all; Firebase sends its own verification and password-reset emails.)
 - Approval in the app for deposits or corrections (withdrawals only).
 - JSON version of the annual report.

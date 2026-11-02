@@ -12,7 +12,7 @@ Related documents: [RBAC.md](RBAC.md), [AUTH.md](AUTH.md),
 [WORKFLOWS.md](WORKFLOWS.md), [DATA_MODEL.md](DATA_MODEL.md),
 [API.md](API.md) (full endpoint reference with real examples),
 [UI_REQUIREMENTS.md](UI_REQUIREMENTS.md), [CUSTOMER_AUTH.md](CUSTOMER_AUTH.md)
-(customer login, activation, Firebase and SMTP setup).
+(customer login, activation, PIN creation, Firebase setup).
 
 ---
 
@@ -84,14 +84,14 @@ Details in [AUTH.md](AUTH.md) and, for customers, [CUSTOMER_AUTH.md](CUSTOMER_AU
 4. Staff tokens expire 8 hours after login; customer tokens after
    `CUSTOMER_SESSION_MINUTES` (default 30 days). There is **no refresh endpoint**: on
    `401`, clear the token and show the login screen.
-5. Inside a customer session the app unlocks with the PIN (`POST /api/customer/unlock`);
+5. After the first activation the customer creates their PIN (`POST /api/customer/pin/setup`).
+   Inside a customer session the app unlocks with the PIN (`POST /api/customer/unlock`);
    the PIN also approves withdrawals.
 6. `POST /api/staff/logout` or `POST /api/customer/logout` revokes the current token
    (`POST /api/customer/logout-all` revokes all of a customer's sessions). The customer
    app also signs out of Firebase.
 7. Current user: `GET /api/staff/me` (staff) or `GET /api/customer/me` (customer).
-8. `POST /api/customer/login` (NIS/account number + PIN) **never returns a token**; it
-   answers `403 activation_required` or `403 firebase_login_required` after a correct PIN.
+8. The PIN is **not** a login credential: there is no NIS/account number + PIN login.
 
 ## 5. Roles
 
@@ -111,14 +111,14 @@ re-checks every request.
 | Feature | Endpoints | Roles |
 | --- | --- | --- |
 | Login / logout / profile | `POST /login`; `GET /staff/me`, `POST /staff/logout`; `POST /customer/auth/login`, `GET /customer/me`, `POST /customer/logout`, `POST /customer/logout-all` | all |
-| Customer activation (public) | `POST /customer/activation/inspect`, `POST /customer/activation/complete`, `POST /customer/activation/resend`; NIS + PIN check `POST /customer/login` | customer (no token yet) |
-| Customer app unlock | `POST /customer/unlock` `{pin}` | customer |
+| Customer activation (public) | `POST /customer/activation` `{nis, id_token}` | customer (no token yet) |
+| Customer PIN creation / app unlock | `POST /customer/pin/setup` `{id_token, pin, pin_confirmation}`; `POST /customer/unlock` `{pin}` | customer |
 | Reference data | `GET /majors`, `GET /settings` | any staff |
 | Staff list / detail | `GET /staff`, `GET /staff/{id}` | admin, supervisor |
 | Staff create / edit / block / unblock / delete / import | `POST /admin/staff`, `PATCH /admin/staff/{id}`, `POST /admin/staff/{id}/block`, `.../unblock`, `DELETE /admin/staff/{id}`, `POST /admin/staff/import` | admin |
 | Settings edit | `PATCH /admin/settings` | admin |
 | Customer list / detail | `GET /customers`, `GET /customers/{id}` | admin, supervisor |
-| Customer open / edit / PIN reset / suspend / graduate / card / invitation | `POST /admin/customers`, `PATCH /admin/customers/{id}`, `POST /admin/customers/{id}/deactivate`, `GET /admin/customers/{id}/card`, `POST /admin/customers/{id}/invitation` | admin |
+| Customer open / edit / PIN reset / suspend / graduate / card | `POST /admin/customers`, `PATCH /admin/customers/{id}`, `POST /admin/customers/{id}/pin-reset`, `POST /admin/customers/{id}/deactivate`, `GET /admin/customers/{id}/card` | admin |
 | Customer statement PDF | `GET /customers/{id}/statement` | admin, supervisor |
 | Shift | `GET /teller/shift`, `POST /teller/shift/open`, `POST /teller/shift/close` | teller |
 | Shift history / print | `GET /teller/daily-reports`, `GET /teller/daily-reports/{id}`, `GET /teller/daily-reports/{id}/export` | teller (own) |
@@ -134,13 +134,13 @@ re-checks every request.
 | Mobile: balance, history, card, PIN, statement PDF | `GET /customer/balance`, `GET /customer/transactions`, `GET /customer/transactions/{id}`, `GET /customer/card`, `POST /customer/pin`, `GET /customer/statement/export` | customer |
 | Mobile: approve/reject a withdrawal | `GET /customer/withdrawal-authorizations[/{id}]`, `POST .../{id}/approve` `{pin}`, `POST .../{id}/reject` | customer |
 
-All 74 API routes are listed in [RBAC.md](RBAC.md#7-endpoint-restrictions).
+All 72 API routes are listed in [RBAC.md](RBAC.md#7-endpoint-restrictions).
 
 ## 7. Request requirements
 
 | Rule | Detail |
 | --- | --- |
-| Auth header | `Authorization: Bearer <token>` on everything except `POST /login` (and the aliases `/staff/login`, `/customer/auth/login`, `/customer/login`) and the three `/customer/activation/*` endpoints |
+| Auth header | `Authorization: Bearer <token>` on everything except `POST /login` (and the aliases `/staff/login`, `/customer/auth/login`) and `POST /customer/activation` |
 | Body format | JSON, except `POST /admin/staff/import` (`multipart/form-data`, field `file`) |
 | Methods | `PATCH` and `PUT` both work for updates (partial updates; send only changed fields) |
 | Path ids | Numeric database ids (`/customers/12`), except `account_number` inside bodies |
@@ -178,11 +178,11 @@ Server validation is authoritative; mirror these for instant feedback.
 | Customer `email` | required on create; valid email, max 255, unique (case-insensitive, stored lowercase); editable only while `activation_status` is `pending` |
 | Customer `class` / `group` | `X`/`XI`/`XII` / `1`–`4` |
 | Customer `major_id` | existing id from `GET /majors` |
-| Customer `pin` | exactly 6 digits (string) |
+| Customer `pin` (admin create/edit) | **prohibited**: the customer creates the PIN in the app (sending it → `422 errors.pin`) |
 | Customer `account_status` (update) | `active` or `suspended` only |
-| Login `identifier` / `pin` | required, max 50 / exactly 6 digits |
 | Firebase `id_token` | required string, max 4096 |
-| Activation `token` | exactly 64 characters (from the link's `?token=`) |
+| Activation `nis` | required, max 20 (the NIS, not the account number) |
+| PIN setup `pin` | exactly 6 digits, with `pin_confirmation` |
 | Unlock `pin` | exactly 6 digits |
 | Transaction `account_number` | existing, not closed |
 | Transaction `amount` | integer 1 – 100,000,000 (**see L1: use multiples of 100**) |
@@ -201,15 +201,16 @@ Every error body has `message`. Handle by status:
 | Status | Meaning | UI expectation |
 | --- | --- | --- |
 | `401` | No/invalid/expired token | Clear stored token, go to login |
-| `401`/`403`/`409`/`410`/`503` with `code` | Customer login, activation and invitation refusals (`firebase_token_invalid`, `activation_required`, `email_mismatch`, …) | Switch on `code`; full table in §15.10 |
+| `401`/`403`/`409`/`503` with `code` | Customer login, activation and PIN setup refusals (`firebase_token_invalid`, `account_not_linked`, `activation_mismatch`, …) | Switch on `code`; full table in §15.10 |
 | `403` | Wrong actor, wrong role, blocked staff, closed customer account, or editing an admin account | Log out and return to login (UKK rubric 3.2), except the "admin account cannot be changed" case on staff edit, which is a normal error message |
 | `404` | Not found or not yours (`Data tidak ditemukan.`, `Nasabah tidak ditemukan.`) | "Not found" state |
 | `405` | Wrong method | Programming error |
 | `409` | Staff delete refused (has history) | Offer "Block" instead |
 | `422` + `errors` | Field validation (`errors.field[]`) | Show messages next to fields |
 | `422` without `errors` | Business rule refused (`message` only, Indonesian) | Show the message prominently; nothing was saved |
-| `422` with `code: customer_app_not_activated` | Withdrawal approval requested for a customer who has not activated the app (§15.5) | Show `message`; in `both` mode switch to the PIN pad |
-| `429` | Rate limit (login 5/min per identifier+IP, Firebase login 30/min per IP; activation 20/min per IP; corrections 10/min per teller; see CUSTOMER_AUTH.md §3.7) | "Too many attempts, wait a minute" |
+| `422` with `code: customer_app_not_activated` | Withdrawal approval requested for a customer who has not activated the app (§15.5) | Show `message` |
+| `422` with `code: pin_not_set` | Something that needs the PIN, for a customer who has not created one yet (§15.5, §15.10) | Show `message`; in the app, go to PIN creation |
+| `429` | Rate limit (staff login 5/min per username+IP, Firebase login 30/min per IP; activation 20/min per IP; corrections 10/min per teller; see CUSTOMER_AUTH.md §3.7) | "Too many attempts, wait a minute" |
 | `500` | Server error. All money operations are rolled back | Generic error. In local dev (`APP_DEBUG=true`) the body includes a stack trace: never show it raw |
 
 Business `422` responses with extra fields:
@@ -260,7 +261,7 @@ your own Indonesian texts.
 | Rule | Where enforced |
 | --- | --- |
 | Withdrawals must leave at least the minimum balance (setting `min_balance`, default Rp10.000) | Service |
-| Withdrawals require the customer's 6-digit PIN; 3 wrong in a row (anywhere the PIN is entered, including the app unlock) lock it for 15 minutes; a correct PIN resets the counter; an admin PIN reset lifts the lock | Service (config `bank.pin_*`) |
+| Withdrawals require the customer's 6-digit PIN, which the customer creates in the app after activation (none before: `422 pin_not_set`); 3 wrong in a row (anywhere the PIN is entered, including the app unlock) lock it for 15 minutes; a correct PIN resets the counter; an admin PIN reset removes the PIN and its lock | Service (config `bank.pin_*`) |
 | Only `active` accounts can deposit/withdraw; `suspended` accounts can log in and be corrected but not transact; closed (graduated) accounts cannot be found or transacted | Service / validation |
 | One shift per teller per day; an old active shift must be closed before opening a new one | Service + unique DB key |
 | Closing requires physical cash = opening + net deposits − net withdrawals | Service |
@@ -272,9 +273,10 @@ your own Indonesian texts.
 | A transaction can be corrected once, by its own teller, within the original's active shift, with an active supervisor's credentials; a deposit correction cannot make the balance negative (but may go below the minimum) | Service + DB unique/CHECK |
 | Admins can create/edit only tellers and supervisors; admin accounts cannot be edited, blocked or deleted through the API | Validation + controller |
 | Staff with history cannot be deleted (only blocked) | DB `ON DELETE RESTRICT` |
-| New accounts get a generated number, status `active`, balance 0, `activation_status: pending`, and an invitation email | Service |
-| A customer session starts only from a verified Firebase ID token (login or activation); the customer is found by Firebase UID, never by email; NIS + PIN alone gives no token | Service |
-| An account can be activated once; the Firebase email must equal the registered email and be verified; one Firebase account per customer | Service + unique DB keys + CHECK |
+| New accounts get a generated number, status `active`, balance 0, `activation_status: pending`, no PIN; the backend sends no email | Service |
+| A customer session starts only from a verified Firebase ID token (login or activation); after activation the customer is found by Firebase UID, never by email; the PIN is never a login credential | Service |
+| An account is activated once, with its NIS and a Firebase account whose verified email equals the registered email; one Firebase account per customer | Service + unique DB keys + CHECK |
+| A PIN exists only on an activated account; it is created by the customer with a fresh Firebase sign-in | Service + CHECK |
 
 ## 14. Account identification and QR
 
@@ -317,13 +319,9 @@ USER ACTION   "Masuk dengan Google" or email + password (Firebase client SDK)
 The web app should refuse `actor: "customer"` (and the mobile app `actor: "staff"`)
 and tell the user to use the other app.
 
-If a customer types NIS/account number + PIN (for example on an old login screen), call
-`POST /api/customer/login`: it never returns a token. After a correct PIN it returns
-`403 activation_required` (show "check your email", with the masked `email`, and offer
-"send a new link" → `POST /api/customer/activation/resend`) or
-`403 firebase_login_required` (show the Google / email sign-in). Wrong PINs count toward the
-shared lock; the message says only "NIS/nomor rekening atau PIN salah." until the account is
-locked, then it contains the unlock time.
+A `403 account_not_linked` on the first sign-in means the account is not activated yet:
+show the NIS activation screen (§15.10). If `customer.pin_set` is `false`, go to PIN
+creation before anything else.
 
 ### 15.2 Teller: start of shift
 
@@ -351,10 +349,10 @@ USER ACTION   Counts the drawer per denomination, submits
 USER ACTION   Scans the card QR or types account number/NIS
 → ENDPOINT    GET /api/teller/customers/lookup?identifier=BANKMINI%3ARPL-2026-001
 → VALIDATION  identifier required, max 60
-→ RESPONSE    200 {data:{id, account_number, nis, full_name, class, group, major_name, account_status, balance, pin_locked_until, activation_status}} · 404
+→ RESPONSE    200 {data:{id, account_number, nis, full_name, class, group, major_name, account_status, balance, pin_locked_until, activation_status, pin_set}} · 404
 → UI          Show a customer card; disable deposit/withdraw when account_status ≠ active;
               disable withdraw while pin_locked_until is in the future; show balance;
-              activation_status "pending" (app not activated) → no mobile approval (§15.5)
+              activation_status "pending" or pin_set false → no withdrawal at all (§15.5)
 ```
 
 ### 15.4 Deposit
@@ -378,19 +376,18 @@ Two ways, chosen by the `withdrawal_verification` setting (`GET /api/settings`):
 `mobile` (default) → **A**; `terminal` → **B**; `both` → offer both (e.g. B as the
 fallback for a customer without a phone).
 
-**A** needs a customer who has activated the app (`activation_status: "activated"` from the
-lookup). For a `pending` customer the backend refuses A with
-`422 {"message": "...", "code": "customer_app_not_activated"}` instead of creating a request
-that would only expire after 2 minutes:
+**Both ways need an activated customer with a PIN.** The customer creates the PIN in the
+app after activating it, so a customer who has not activated (`activation_status:
+"pending"`) or has no PIN yet (`pin_set: false`, also after an admin PIN reset) cannot
+withdraw in any mode. Disable the withdrawal up front from the lookup and show why:
 
-| Mode | Customer `pending` | Show |
+| Lookup | Hint | Backend answer if sent anyway |
 | --- | --- | --- |
-| `mobile` | No withdrawal possible at the counter | Disable "Kirim ke aplikasi nasabah" with the hint "Nasabah belum mengaktifkan aplikasi"; the backend message: `Nasabah belum mengaktifkan aplikasi Bank Mini, sehingga tidak dapat menyetujui penarikan melalui aplikasi. Minta nasabah menyelesaikan aktivasi melalui tautan di email undangan terlebih dahulu.` |
-| `both` | Only **B** (PIN at the terminal) | Hide or disable A, show the PIN pad; the backend message for A: `Nasabah belum mengaktifkan aplikasi Bank Mini, sehingga tidak dapat menyetujui penarikan melalui aplikasi. Lakukan penarikan dengan PIN nasabah di terminal loket.` |
-| `terminal` | Unaffected (B only) | — |
+| `activation_status: "pending"` | "Nasabah belum mengaktifkan aplikasi" | A: `422 {"message": "Nasabah belum mengaktifkan aplikasi Bank Mini, sehingga belum dapat melakukan penarikan. Minta nasabah mengaktifkan akun di aplikasi dan membuat PIN terlebih dahulu.", "code": "customer_app_not_activated"}`; B: `422 pin_not_set` |
+| `activation_status: "activated"`, `pin_set: false` | "Nasabah belum membuat PIN" | A and B: `422 {"message": "Nasabah belum membuat PIN. PIN dibuat oleh nasabah di aplikasi Bank Mini setelah akun diaktifkan.", "code": "pin_not_set"}` |
 
-Disable up front from `activation_status`, and still handle the `422` code (the status can
-change between lookup and request): show `message` as is.
+Still handle both codes (the state can change between lookup and request): show
+`message` as is. No request is created and no PIN attempt is counted.
 
 **A. Customer approves in the mobile app (default)**
 
@@ -399,7 +396,7 @@ TELLER        Enters amount → "Kirim ke aplikasi nasabah"
 → ENDPOINT    POST /api/teller/withdrawal-authorizations {"account_number":"RPL-2026-001","amount":30000}
 → RESPONSE    201 {data:{id, status:"pending", expires_at, server_time, customer, ...}} ·
               422 open request exists / PIN locked / balance / shift / status / mode disabled ·
-              422 {message, code:"customer_app_not_activated"} (app not activated, see above)
+              422 {message, code:"customer_app_not_activated" | "pin_not_set"} (see above)
 → UI          Waiting screen: amount, customer, countdown (expires_at − server_time), "Batalkan"
               Poll GET /api/teller/withdrawal-authorizations/{id} every 2 s
               On a reload: GET /api/teller/withdrawal-authorizations?status=open to resume
@@ -436,7 +433,8 @@ USER ACTION   Enters amount; customer types PIN on the confirmation screen
               422 {"message":"PIN salah. Sisa percobaan: 2.","remaining_attempts":2,"pin_locked_until":null} ·
               422 locked (remaining_attempts 0, pin_locked_until) ·
               422 "Saldo tidak mencukupi ... penarikan maksimal RpX." ·
-              422 "Penarikan harus disetujui nasabah melalui aplikasi..." (mode is mobile)
+              422 "Penarikan harus disetujui nasabah melalui aplikasi..." (mode is mobile) ·
+              422 {message, code:"pin_not_set"} (no PIN yet, see above)
 → UI          Pre-check balance − amount ≥ min_balance (from GET /settings) before asking for the PIN;
               mask the PIN input; clear it after every attempt; show remaining attempts / lock time
 ```
@@ -494,80 +492,40 @@ USER ACTION   Opens the app after login
               and show a pending request prominently (see §15.5 A)
 ```
 
-### 15.10 Customer activation, login, unlock and password (Firebase)
+### 15.10 Customer activation, PIN, login, unlock and password (Firebase)
 
-Backend design, Firebase Console and SMTP setup: [CUSTOMER_AUTH.md](CUSTOMER_AUTH.md).
+Backend design and Firebase Console setup are in [CUSTOMER_AUTH.md](CUSTOMER_AUTH.md).
 No customer app exists yet; this is the contract for whichever client (Expo or web) hosts
 these screens. Firebase calls below use the modular Firebase JS SDK names; native
-libraries have equivalents.
+libraries have equivalents. The backend sends no email; the only emails come from
+Firebase (verification, password reset).
 
 **Configuration (client):** Firebase web config through the client's environment
-(`VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`,
-`VITE_FIREBASE_APP_ID`, or `EXPO_PUBLIC_FIREBASE_*`), plus the Google web client ID for
-native Google Sign-In. These values are public. The service account key is server-only
-and must never be in a client.
+(`EXPO_PUBLIC_FIREBASE_*`, values in [firebase-web-config.md](firebase-web-config.md)),
+plus the Google web client ID for native Google Sign-In. These values are public. The
+service account key is server-only and must never be in a client.
 
-**Activation page** (opened from the email link `CUSTOMER_ACTIVATION_URL?token=…`; the
-URL must open this page in the app or the web):
+**Sign-in screen** (first time and later):
 
 ```text
-1. Read token from the URL. Do not log it or send it to analytics.
-2. POST /api/customer/activation/inspect {token}
-   200 → show full_name, account_number and the registered email (read-only), expires_at,
-         and the two options below.
-   404 activation_invalid → "Tautan tidak valid atau sudah dipakai" (+ "Masuk" if they already activated)
-   410 activation_expired → "Tautan kedaluwarsa"; offer "Kirim tautan baru"
-       (NIS + PIN → POST /api/customer/activation/resend) or "hubungi petugas".
+Option A — "Masuk dengan Google"
+  web: signInWithPopup(auth, new GoogleAuthProvider());
+  native: Google Sign-In library → GoogleAuthProvider.credential(idToken) → signInWithCredential
 
-Option A — Continue with Google
-3. Sign in with Google (web: signInWithPopup(auth, provider) with
-   provider.setCustomParameters({login_hint: registeredEmail}); native: Google Sign-In
-   library → GoogleAuthProvider.credential(idToken) → signInWithCredential).
-4. If user.email ≠ registered email (compare lowercase): signOut(), explain which address
-   to use. (The backend would refuse it anyway with 403 email_mismatch.)
-5. POST /api/customer/activation/complete {token, id_token: await user.getIdToken()}
+Option B — email + password
+  existing account: signInWithEmailAndPassword(auth, email, password)
+  first time ("Buat akun"): createUserWithEmailAndPassword(auth, email, password)
+     - auth/email-already-in-use → sign in instead (password, or Google if created that way)
+     - auth/weak-password → show the rule
+     then sendEmailVerification(user) → screen "Cek email Anda, lalu tekan Saya sudah verifikasi"
+     on that button: await user.reload(); if !user.emailVerified keep waiting (resend after 60 s)
+  Tell the student to use the email the school registered.
 
-Option B — Create a password
-3. Show the registered email as fixed text (never an editable field) and a password +
-   confirmation (follow the project's Firebase password policy).
-4. createUserWithEmailAndPassword(auth, registeredEmail, password)
-   - auth/email-already-in-use: an account with this email exists → ask them to sign in
-     with it (password, or Google if that is how it was created) and continue at step 7.
-   - auth/weak-password → show the rule.
-5. sendEmailVerification(user, {url: <this activation page URL with the token>})
-   → screen "Cek email Anda, lalu tekan Saya sudah verifikasi".
-6. On that button (or when returning from the link): await user.reload();
-   if !user.emailVerified → keep waiting (offer resend after 60 s).
-7. id_token = await user.getIdToken(true)   ← force refresh so the token carries email_verified
-8. POST /api/customer/activation/complete {token, id_token}
-
-Both options
-   200 → store data.token + data.expires_at securely; go to the app (ask the customer to
-         keep their PIN private; the PIN is the one given by the bank, changeable in-app).
-   403 email_not_verified → back to step 5/6 (the link stays usable)
-   403 email_mismatch     → signOut(); "Gunakan akun <masked email>" (link stays usable)
-   409 identity_already_linked → this Google/email account already owns another account;
-       signOut() and use another account / contact staff
-   401 firebase_token_invalid → sign in again
-   503 auth_unavailable   → retry later
-```
-
-**Existing Firebase account / provider conflicts.** With "one account per email"
-(project default), signing in with Google for an email that already has a password
-account normally returns the same Firebase user. If the client gets
-`auth/account-exists-with-different-credential`, ask the user to sign in with the existing
-method first, then call `linkWithCredential(user, pendingCredential)`. Never link or choose
-an account because an email matches; the backend only trusts the UID it bound at
-activation.
-
-**Login**
-
-```text
-signInWithEmailAndPassword(auth, email, password)  or Google (as above)
-→ POST /api/customer/auth/login {id_token: await user.getIdToken()}
-   200 → store token + expires_at
-   403 account_not_linked → "Akun ini belum terhubung ke rekening": activation is done from
-       the email link; offer the NIS + PIN "kirim tautan baru" flow
+Then
+→ POST /api/customer/auth/login {id_token: await user.getIdToken(true)}
+   200 → store data.token + data.expires_at securely;
+         data.customer.pin_set false → PIN creation screen, otherwise into the app
+   403 account_not_linked → first time: NIS activation screen (below)
    403 email_not_verified → sendEmailVerification(), then retry with getIdToken(true)
    403 account_inactive   → "Rekening sudah ditutup"; signOut()
    401 firebase_token_invalid → signOut(); sign in again
@@ -577,6 +535,52 @@ signInWithEmailAndPassword(auth, email, password)  or Google (as above)
 With email enumeration protection on, Firebase sign-in errors do not say whether the
 email exists (`auth/invalid-credential`); show one generic "email atau password salah".
 
+**Activation screen** (first sign-in only; the Firebase user is still signed in):
+
+```text
+Show the signed-in email (read-only) and one field "NIS" (from the student card).
+→ POST /api/customer/activation {nis, id_token: await user.getIdToken(true)}
+   200 → store data.token + data.expires_at securely → PIN creation screen
+         (data.customer.pin_set is false)
+   403 activation_mismatch → "NIS tidak cocok dengan email akun ini": check the NIS, or
+       signOut() and sign in with the email the school registered; otherwise contact staff
+   403 email_not_verified → back to the verification step
+   409 already_activated → this account is already activated with another Google/email
+       account: signOut(), sign in with that one, or contact staff
+   409 identity_already_linked → this Google/email account already owns another account;
+       signOut() and use another account / contact staff
+   403 account_inactive → "Rekening sudah ditutup"
+   401 firebase_token_invalid → sign in again · 503 auth_unavailable → retry later
+```
+
+**PIN creation screen** (after activation, and whenever `pin_set` is `false`, e.g. after
+an administrator reset):
+
+```text
+New PIN (6 digits, masked) + confirmation. Explain: "PIN dipakai untuk membuka aplikasi
+dan menyetujui penarikan. Jangan beri tahu siapa pun, termasuk petugas."
+→ POST /api/customer/pin/setup {id_token: await user.getIdToken(true), pin, pin_confirmation}
+   (with the session token)
+   201 → into the app
+   422 errors.pin → show the rule (6 digits, confirmed)
+   409 pin_already_set → a PIN exists already: go to the unlock screen
+   403 identity_mismatch → the signed-in Firebase account is not the one bound to this
+       account: signOut() and sign in again
+   401 firebase_token_invalid → the Firebase sign-in is no longer valid: sign in again
+       (if the backend session is still valid, only Firebase needs a new sign-in)
+```
+
+The fresh ID token is required; keep the Firebase user signed in while the backend
+session lasts so the app can get one.
+
+**Existing Firebase account / provider conflicts.** With "one account per email"
+(project default), signing in with Google for an email that already has a password
+account normally returns the same Firebase user. If the client gets
+`auth/account-exists-with-different-credential`, ask the user to sign in with the existing
+method first, then call `linkWithCredential(user, pendingCredential)`. Never link or choose
+an account because an email matches; the backend only trusts the UID it bound at
+activation.
+
 **Session and PIN unlock**
 
 - Keep `token` and `expires_at` in secure storage (Expo: `expo-secure-store`).
@@ -584,7 +588,8 @@ email exists (`auth/invalid-credential`); show one generic "email atau password 
   minutes): if `expires_at` has passed → sign-in screen; otherwise show the PIN pad →
   `POST /api/customer/unlock {pin}`:
   `200` → continue; `422` with `remaining_attempts` → "PIN salah, sisa N";
-  `422` with `pin_locked_until` → show the unlock time; `401` → session over → sign-in.
+  `422` with `pin_locked_until` → show the unlock time; `422 pin_not_set` → PIN creation
+  screen; `401` → session over → sign-in.
 - When the backend session expires (`401`), call Firebase `signOut()` and require a full
   sign-in. Do not silently exchange a cached Firebase session for a new backend session;
   that would make the session effectively endless.
@@ -594,11 +599,14 @@ email exists (`auth/invalid-credential`); show one generic "email atau password 
 perangkat"), then Firebase `signOut()`, then delete the stored token, even if the request
 failed.
 
+**Forgot PIN:** there is no self-service reset. The student asks an administrator, who
+resets it (`POST /admin/customers/{id}/pin-reset`); the app then shows PIN creation
+(`pin_set: false`, or `422 pin_not_set` on unlock).
+
 **Forgot password** (email/password accounts): `sendPasswordResetEmail(auth, email)`.
 Always show the same message ("Jika email terdaftar, tautan reset telah dikirim"),
 whatever Firebase returns, so the screen does not reveal which emails exist. Firebase sends
-the email (its template, §6 of CUSTOMER_AUTH.md). The bank PIN is unrelated: a forgotten PIN
-is reset by an administrator.
+the email (its template, §6 of CUSTOMER_AUTH.md). The bank PIN is unrelated.
 
 **Change password** (signed-in, provider `password`): ask for the current and new
 password → `reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, current))`
@@ -613,25 +621,28 @@ the user's other Firebase sessions but **not** backend sessions on other devices
 
 | `code` | Status | Where | UI |
 | --- | --- | --- | --- |
-| `activation_required` | 403 | NIS + PIN check | "Cek email" + masked `email`; resend option (`email` null → contact staff) |
-| `firebase_login_required` | 403 | NIS + PIN check, resend | Show Google / email sign-in |
-| `activation_invalid` | 404 | activation | Invalid/used link |
-| `activation_expired` | 410 | activation | Expired; request a new link |
+| `account_not_linked` | 403 | login | First sign-in: show the NIS activation screen |
+| `activation_mismatch` | 403 | activation | NIS and signed-in email do not match a customer |
+| `already_activated` | 409 | activation | Activated with another Google/email account |
+| `identity_already_linked` | 409 | activation | This Google/email account belongs to another customer |
 | `email_not_verified` | 403 | activation, login | Verify email, retry with `getIdToken(true)` |
-| `email_mismatch` | 403 | activation | Use the registered (masked `email`) account |
-| `identity_already_linked` | 409 | activation | Account belongs to another customer |
-| `account_not_linked` | 403 | login | Not activated with this account |
-| `account_inactive` | 403 | login | Account closed |
-| `provider_not_allowed` | 403 | activation, login | Only Google / email |
-| `firebase_token_invalid` | 401 | activation, login | Sign in again |
-| `auth_unavailable` | 503 | activation, login | Try again later |
-| `already_activated` / `email_missing` | 409 / 422 | admin invitation | Admin UI messages |
+| `account_inactive` | 403 | activation, login | Account closed |
+| `provider_not_allowed` | 403 | activation, login, PIN setup | Only Google / email |
+| `firebase_token_invalid` | 401 | activation, login, PIN setup | Sign in again |
+| `auth_unavailable` | 503 | activation, login, PIN setup | Try again later |
+| `identity_mismatch` | 403 | PIN setup | Signed in with another Firebase account |
+| `pin_already_set` | 409 | PIN setup | Go to unlock |
+| `pin_not_set` | 422 | unlock, PIN change, approval, teller withdrawals | Create the PIN first |
 
-**Admin screens:** the create-customer form needs `email` (show `invitation.mail_sent`;
-when `false`, offer "Kirim ulang undangan"). Show `activation_status` in the list
-(`GET /customers?activation=pending`) and detail, a "Kirim ulang undangan" button for
-pending accounts with an email (`POST /admin/customers/{id}/invitation`), and lock the email
-field when `activation_status = activated`.
+**Admin screens:**
+- **Create customer:** the form needs `email` and has **no PIN field** (sending `pin` → `422`).
+  After saving, tell the administrator to have the student install the app, sign in with
+  that email, enter the NIS and create a PIN.
+- **List and detail:** show `activation_status` (`GET /customers?activation=pending`) and
+  `pin_set`.
+- **Email field:** editable while pending, locked once `activation_status` is `activated`.
+- **"Reset PIN":** a button calling `POST /admin/customers/{id}/pin-reset` (no PIN input).
+  It removes the PIN, and the student creates a new one in the app.
 
 ## 16. Pagination, filtering, sorting
 
@@ -691,9 +702,9 @@ These are current behaviors. They are documented, not fixed.
 | L19 | Withdrawal requests are delivered by polling; there are no push notifications. The customer must have the app open (or refresh) to see a request. | Tell the customer to open the "Persetujuan" screen; poll while visible |
 | L20 | Any device where the customer is logged in can approve a request (tokens have no abilities). | Optionally ask for device biometrics before showing the approval PIN pad |
 | L18 | No sort parameters on any list; orders are fixed per endpoint (see §16). | Sort client-side within a page only, or accept the server order |
-| L21 | Revoking a user in the Firebase console, or a Firebase password change, does not end backend sessions that already exist (Firebase is checked at login and activation only). | Offer `logout-all` after a password change; admins deactivate to cut access |
+| L21 | Revoking a user in the Firebase console, or a Firebase password change, does not end backend sessions that already exist (Firebase is checked at login, activation and PIN setup only). | Offer `logout-all` after a password change; admins deactivate to cut access |
 | L22 | The PIN unlock is enforced by the app; the API accepts a valid session token without a recent unlock. | Always gate the UI with the PIN after the idle time |
-| L23 | Invitation and "account activated" emails are sent synchronously; a mail failure returns `mail_sent: false` but keeps the account. | Show the flag; offer resend |
+| L23 | The backend sends no email. A new customer is told by staff (in person) to install the app; Firebase sends only its verification and password-reset emails. | Show the next steps after creating a customer |
 
 ## 19. Known inconsistencies or unclear behavior
 
@@ -701,15 +712,15 @@ These are current behaviors. They are documented, not fixed.
 | --- | --- | --- |
 | I1 | The UKK soal's RBAC matrix gives Admin no access to "input transaksi" and read access to the journal. The backend also lets Admin read the transaction log (`/audit/transactions*`). Reading is not input, but a strict reading of the matrix could disagree. | Implemented as described; decide whether the admin UI shows the log |
 | I2 | `POST /staff/login` and `POST /customer/auth/login` duplicate `POST /login`. | Use `/login` only (or the customer alias) |
-| I3 | The customer login message `Rekening ini sudah tidak aktif.` (shown only after a correct PIN) can practically never appear: `inactive` is only set by deactivation, which also soft-deletes, and soft-deleted accounts get the generic "wrong NIS/PIN" message. | Treat both as login failure |
+| I3 | (Removed: the NIS + PIN login no longer exists.) | — |
 | I4 | `docs/API.md` described `physical_balance`/`difference` as null while a shift is open, which is wrong for rejected shifts (L3). | Corrected in API.md |
 | I5 | `docs/API.md`'s access matrix showed Admin with no access in the deposit/withdrawal row although Admin can read the audit log. | Corrected in API.md |
-| I7 | PRD FR-Auth-02 says students sign in with NIS/account number + PIN. By decision, customers now sign in with Firebase (Google or email/password) after activation, and the PIN unlocks the app and authorizes withdrawals; NIS + PIN alone no longer starts a session. | Implemented as described; see CUSTOMER_AUTH.md A2 |
+| I7 | PRD FR-Auth-02 says students sign in with NIS/account number + PIN, and the PRD has the administrator set the PIN. By decision, customers sign in with Firebase (Google or email/password), activate with their NIS, and create their own PIN, which unlocks the app and authorizes withdrawals; the PIN is never a login credential. | Implemented as described; see CUSTOMER_AUTH.md A2–A5 |
 | I6 | The UKK interview asked for Customer Service / Accounting roles and student vs employee savings products; the backend implements the soal's four roles and one savings product (account 201). | Not implemented; do not build UI for them |
 
 ## 20. Not implemented (do not build UI for these)
 
-Customer self-registration (accounts are created by an administrator and activated from the invitation) · customer-initiated transactions or transfers between
+Customer self-registration (accounts are created by an administrator; the student activates them in the app) · customer-initiated transactions or transfers between
 accounts (customers only approve teller-started withdrawals) · loans, term deposits,
 fees · notifications/push (use polling) · approval in the app for deposits or corrections · "forgot PIN"
 (admin reset only) · staff password reset · staff self-service profile/password · restoring graduated accounts ·

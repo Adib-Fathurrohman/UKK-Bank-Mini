@@ -327,7 +327,7 @@ test('a wrong PIN is refused, counted, and leaves the request pending', function
     expect($this->customer->fresh()->pin_failed_attempts)->toBe(0);
 });
 
-test('three wrong PINs lock approval, login and new requests for fifteen minutes', function () {
+test('three wrong PINs lock approval, unlock and new requests for fifteen minutes', function () {
     $id = pendingWithdrawal();
 
     approveAsCustomer($id, '000000')->assertJsonPath('remaining_attempts', 2);
@@ -341,11 +341,10 @@ test('three wrong PINs lock approval, login and new requests for fifteen minutes
     approveAsCustomer($id)->assertUnprocessable()->assertJsonPath('remaining_attempts', 0);
     expect(authorization($id)->status)->toBe(WithdrawalAuthorizationStatus::PENDING);
 
-    // The same lock applies to login.
-    $this->app['auth']->forgetGuards();
-    $this->postJson('/api/customer/login', ['identifier' => '20260001', 'pin' => '123456'])
+    // The same lock applies to unlocking the app.
+    $this->postJson('/api/customer/unlock', ['pin' => '123456'])
         ->assertUnprocessable()
-        ->assertJsonValidationErrors(['identifier' => 'pukul 09:15']);
+        ->assertJsonPath('message', fn ($message) => str_contains($message, 'pukul 09:15'));
 
     // And the teller cannot start a new request while the PIN is locked.
     asTeller();
@@ -614,20 +613,25 @@ test('in both mode either way works', function () {
 |--------------------------------------------------------------------------
 */
 
-test('the teller lookup shows whether the customer has activated the app', function () {
-    Customer::factory()->create(['account_number' => 'RPL-2026-002']);
+test('the teller lookup shows whether the customer has activated the app and created a PIN', function () {
+    Customer::factory()->pending()->create(['account_number' => 'RPL-2026-002']);
 
-    $this->getJson('/api/teller/customers/lookup?identifier=RPL-2026-001')->assertOk()->assertJsonPath('data.activation_status', 'activated');
-    $this->getJson('/api/teller/customers/lookup?identifier=RPL-2026-002')->assertOk()->assertJsonPath('data.activation_status', 'pending');
+    $this->getJson('/api/teller/customers/lookup?identifier=RPL-2026-001')->assertOk()
+        ->assertJsonPath('data.activation_status', 'activated')
+        ->assertJsonPath('data.pin_set', true);
+    $this->getJson('/api/teller/customers/lookup?identifier=RPL-2026-002')->assertOk()
+        ->assertJsonPath('data.activation_status', 'pending')
+        ->assertJsonPath('data.pin_set', false);
 });
 
-test('in mobile mode a request for a customer without the app is refused up front', function () {
-    $pending = Customer::factory()->create(['account_number' => 'RPL-2026-002', 'balance' => 100000]);
+test('a request for a customer without the app is refused up front', function (string $mode) {
+    allowTerminalWithdrawals($mode);
+    $pending = Customer::factory()->pending()->create(['account_number' => 'RPL-2026-002', 'balance' => 100000]);
 
     requestWithdrawal(20000, 'RPL-2026-002')
         ->assertUnprocessable()
         ->assertExactJson([
-            'message' => 'Nasabah belum mengaktifkan aplikasi Bank Mini, sehingga tidak dapat menyetujui penarikan melalui aplikasi. Minta nasabah menyelesaikan aktivasi melalui tautan di email undangan terlebih dahulu.',
+            'message' => 'Nasabah belum mengaktifkan aplikasi Bank Mini, sehingga belum dapat melakukan penarikan. Minta nasabah mengaktifkan akun di aplikasi dan membuat PIN terlebih dahulu.',
             'code' => 'customer_app_not_activated',
         ]);
 
@@ -636,25 +640,10 @@ test('in mobile mode a request for a customer without the app is refused up fron
 
     // The teller is not left with an open request and can serve the next customer.
     pendingWithdrawal();
-});
-
-test('in both mode the request is refused too and the teller is pointed to the terminal', function () {
-    allowTerminalWithdrawals('both');
-    Customer::factory()->create(['account_number' => 'RPL-2026-002', 'pin' => '654321', 'balance' => 100000]);
-
-    requestWithdrawal(20000, 'RPL-2026-002')
-        ->assertUnprocessable()
-        ->assertExactJson([
-            'message' => 'Nasabah belum mengaktifkan aplikasi Bank Mini, sehingga tidak dapat menyetujui penarikan melalui aplikasi. Lakukan penarikan dengan PIN nasabah di terminal loket.',
-            'code' => 'customer_app_not_activated',
-        ]);
-    expect(WithdrawalAuthorization::count())->toBe(0);
-
-    $this->postJson('/api/teller/withdrawals', ['account_number' => 'RPL-2026-002', 'amount' => 20000, 'pin' => '654321'])->assertCreated();
-});
+})->with(['mobile', 'both']);
 
 test('an inactive account is reported before the missing activation', function () {
-    Customer::factory()->suspended()->create(['account_number' => 'RPL-2026-002', 'balance' => 100000]);
+    Customer::factory()->suspended()->pending()->create(['account_number' => 'RPL-2026-002', 'balance' => 100000]);
 
     requestWithdrawal(20000, 'RPL-2026-002')
         ->assertUnprocessable()

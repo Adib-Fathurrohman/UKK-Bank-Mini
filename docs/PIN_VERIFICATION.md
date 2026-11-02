@@ -18,8 +18,9 @@ existed. This version describes what is implemented. §8 lists the decisions tak
 
 | Question | Answer |
 | --- | --- |
-| Where is the PIN checked? | Only in `App\Services\PinService::verify()`. Callers: the NIS + PIN check (`/customer/login`, `/customer/activation/resend`), the app unlock (`/customer/unlock`), withdrawal approval (Mode A), terminal withdrawal (Mode B), PIN change |
-| Does the PIN start a session? | **No** (since the Firebase customer login, [CUSTOMER_AUTH.md](CUSTOMER_AUTH.md)). Sessions start from a Firebase sign-in; the PIN unlocks the app during the session and authorizes withdrawals |
+| Where is the PIN checked? | Only in `App\Services\PinService::verify()`. Callers: the app unlock (`/customer/unlock`), withdrawal approval (Mode A), terminal withdrawal (Mode B), PIN change |
+| Who sets the PIN? | **The customer**, in the app after activation (`POST /customer/pin/setup`, with a fresh Firebase ID token). Administrators never set it; their reset removes it. Before a PIN exists every check answers `422 pin_not_set`, so a customer who has not activated cannot withdraw at all |
+| Does the PIN start a session? | **No** ([CUSTOMER_AUTH.md](CUSTOMER_AUTH.md)). Sessions start from a Firebase sign-in; the PIN unlocks the app during the session and authorizes withdrawals |
 | Who may submit a PIN? | **Only the customer** in Mode A (`POST /api/customer/withdrawal-authorizations/{id}/approve`), and only for their own request. In Mode B the teller's client sends it, which is why Mode B is off by default |
 | Can the customer start a withdrawal? | **No.** Customers can only list, approve or reject requests a teller created. All transaction endpoints are teller-only |
 | Can staff approve for the customer? | **No.** The approve/reject endpoints require a customer token (`customer` middleware); tellers, supervisors and administrators get `403` |
@@ -40,29 +41,19 @@ existed. This version describes what is implemented. §8 lists the decisions tak
 - `pin_failed_attempts` counts consecutive wrong PINs. The 3rd wrong PIN
   (`BANK_PIN_MAX_ATTEMPTS`) sets `pin_locked_until` to now + 15 minutes
   (`BANK_PIN_LOCK_MINUTES`). While locked, even the correct PIN is refused. A correct
-  PIN resets the counter. An administrator PIN reset clears the lock.
-- **One lock for every place the PIN is entered**: the NIS + PIN check, the app unlock,
-  the invitation resend, Mode A approval, Mode B withdrawal and PIN change. Three wrong
-  PINs at one place lock all the others too.
+  PIN resets the counter. An administrator PIN reset removes the PIN and the lock.
+- `customers.pin` is **nullable**: null until the customer creates it, and after an
+  administrator reset. A database `CHECK (pin IS NULL OR activated_at IS NOT NULL)` keeps
+  it off accounts that are not activated. With no PIN, `verify()` throws
+  `PinNotSetException` (`422 pin_not_set`) without counting an attempt.
+- **One lock for every place the PIN is entered**: the app unlock, Mode A approval,
+  Mode B withdrawal and PIN change. Three wrong PINs at one place lock all the others too.
 
-### NIS + PIN check (formerly the customer login)
+### NIS + PIN check (removed)
 
-Before Mode A, `Customer\AuthController::login()` checked the PIN with `Hash::check()`
-and only had the per-identifier + IP rate limit; it now goes through
-`PinService::verify()` (in `CustomerAuthService::verifyPinCredentials()`). Since the
-Firebase customer login it **no longer issues a token**: after a correct PIN it answers
-`403 activation_required` or `403 firebase_login_required`. The failure responses are
-unchanged:
-
-| Situation | Response |
-| --- | --- |
-| Unknown NIS/account number, or wrong PIN | `422` `errors.identifier: "NIS/nomor rekening atau PIN salah."`. The remaining attempts are **not** revealed at login |
-| Locked (including the attempt that causes the lock) | `422` `errors.identifier: "Terlalu banyak percobaan PIN salah. Coba lagi pukul HH:MM."` |
-| Correct PIN, account `inactive` | `422` `"Rekening ini sudah tidak aktif."` (only shown after the correct PIN) |
-
-The lookup tries the account number first, then the NIS, so both identifiers hit the
-same customer and the same counter. The `throttle:login` limiter (5/min per identifier +
-IP) still applies on top.
+The former customer login with NIS/account number + PIN, and the activation-link resend
+that also used the PIN, no longer exist (`POST /customer/login` answers `404`). The PIN is
+never a login credential.
 
 ---
 
@@ -203,7 +194,8 @@ Mode A withdrawals show `withdrawal_authorization: {id, method: "mobile", approv
 | PIN never stored in plaintext | bcrypt hash only; the authorization table has no PIN column |
 | PIN never in responses or logs | No resource includes `pin`; validation errors don't echo values; no request logging (tested: no response contains `"pin` or the PIN value) |
 | PIN never sent to teller clients (Mode A) | The PIN goes only from the customer's phone to `approve` |
-| Brute force | Shared 3-attempt / 15-minute lock across the NIS + PIN check, app unlock, invitation resend, approval, withdrawal and PIN change, persisted even on failure; plus rate limits |
+| Brute force | Shared 3-attempt / 15-minute lock across the app unlock, approval, withdrawal and PIN change, persisted even on failure; plus rate limits. The PIN is never a login credential |
+| PIN set by someone else | Only the customer creates the PIN, inside their session and with a fresh Firebase ID token of the bound account; administrators can only remove it |
 | Approving a different withdrawal | The customer sees amount, teller and balance after before approving; completion uses the amount and account stored in the request |
 | Replay / reuse | One request → at most one transaction (status guard, row lock, unique `transaction_id`); `complete` retries return the same transaction |
 | Stale approvals | 120 s to approve, 120 s to complete; requests die with the shift |
@@ -248,13 +240,14 @@ Mode A withdrawals show `withdrawal_authorization: {id, method: "mobile", approv
 | # | Decision |
 | --- | --- |
 | D1 | Setting `withdrawal_verification` = `mobile` \| `terminal` \| `both`, default `mobile`. `POST /teller/withdrawals` (PIN at the terminal) only works in `terminal`/`both` |
-| D2 | One shared PIN lock for the NIS + PIN check, app unlock, invitation resend, approval, withdrawal and PIN change |
+| D2 | One shared PIN lock for the app unlock, approval, withdrawal and PIN change |
 | D3 | 120 s to approve, 120 s to complete after approval |
 | D4 | At most one open request per customer and per teller |
-| D5 | The NIS + PIN check shows a generic error and reveals only an actual lock, not the remaining attempts (the app unlock, being inside a session, returns `remaining_attempts` like approval) |
+| D5 | (Superseded: the NIS + PIN check was removed. The app unlock, being inside a session, returns `remaining_attempts` like approval.) |
 | D6 | No match code between screens: the customer confirms amount and teller name |
 | D7 | No authorization list for supervisors/admins; shown on the audit transaction detail |
 | D8 | This audit was committed before implementation (`c405986`) |
+| D9 | The customer creates the PIN after activating the app; until then no withdrawal of any kind is possible ([CUSTOMER_AUTH.md](CUSTOMER_AUTH.md) A3) |
 
 Mode B as a recorded, supervisor-approved fallback, push notifications and deposit
 approval are out of scope for this phase.

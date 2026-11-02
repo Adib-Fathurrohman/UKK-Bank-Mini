@@ -28,7 +28,7 @@ Versions from `composer.json` / `composer.lock`:
 | PHP | `^8.3` (constraint in `composer.json`) |
 | Database | MariaDB (`mariadb` driver, InnoDB engine pinned in `config/database.php`). Server version not pinned in the repository. Note: `.env.example` defaults to `DB_CONNECTION=sqlite`; the README instructs MariaDB. Tests use in-memory SQLite (`phpunit.xml`) |
 | Authentication | Laravel Sanctum v4.3.3 personal access tokens (bearer): staff 480-minute expiry, customers `CUSTOMER_SESSION_MINUTES` (default 30 days). Customer identity: Firebase Authentication through the Firebase Admin SDK `kreait/firebase-php` v8.6.0 |
-| Mail | Laravel mail (SMTP in production; `MAIL_MAILER=log` locally) for the invitation and "account activated" emails |
+| Mail | None: the backend sends no email. Customers get only Firebase's own emails (verification, password reset) |
 | API architecture | JSON REST under `/api`, Laravel API Resources (`{data: ...}`), form-request validation, service classes for business rules, route middleware for authorization |
 | PDF | barryvdh/laravel-dompdf v3.1.2 (dompdf v3.1.6) |
 | Spreadsheet import | openspout/openspout v5.13.0 |
@@ -50,8 +50,11 @@ One role per staff member; multi-role is not implemented. Details: [RBAC.md](RBA
 - Single login gateway for all roles; Sanctum bearer tokens; logout; current user.
 - Staff management: create, edit, block, unblock, delete (only without history),
   spreadsheet import with generated passwords; teller identity (class, phone).
-- Customer accounts: open with generated number `RPL-2026-001`, edit, suspend,
-  reset PIN, graduate (inactive + soft delete), card data with QR payload.
+- Customer accounts: open with generated number `RPL-2026-001` and the student's email
+  (no PIN), edit, suspend, reset (remove) PIN, graduate (inactive + soft delete), card
+  data with QR payload.
+- Customer app: Firebase sign-in (Google or email/password), one-time activation with
+  the NIS, the customer creates their own PIN; no email sent by the backend.
 - Teller shift: open with a denomination count, live totals, close with a physical
   count that must match the system balance, shift history.
 - Customer lookup by scanned QR payload, account number or NIS.
@@ -60,8 +63,8 @@ One role per staff member; multi-role is not implemented. Details: [RBAC.md](RBA
   approves it in the mobile app with their PIN, the teller completes it (polling,
   120 s windows, exactly-once completion). PIN at the teller terminal is an optional
   mode (`withdrawal_verification` setting).
-- One PIN lock (3 wrong → 15 minutes) shared by customer login, approval, terminal
-  withdrawal and PIN change.
+- One PIN lock (3 wrong → 15 minutes) shared by the app unlock, approval, terminal
+  withdrawal and PIN change. No withdrawal before the customer has created a PIN.
 - Corrections (reversal transactions) authorized by a supervisor's credentials.
 - Double-entry journal (101 Kas / 201 Tabungan) written automatically.
 - Supervisor review: approve (moves cash to the vault), hold, reject (reopens shift);
@@ -70,21 +73,21 @@ One role per staff member; multi-role is not implemented. Details: [RBAC.md](RBA
   trial balance.
 - PDFs: receipt, daily report (locked until reconciled), customer statement, journal
   report, audit trail, annual report.
-- Mobile: balance, statement, transaction detail, digital card, PIN change,
+- Mobile: balance, statement, transaction detail, digital card, PIN creation and change,
   statement PDF, approve/reject withdrawal requests.
 - Admin settings: minimum balance, QR scanner mode, withdrawal verification mode.
 
 ## API status
 
-**74 routes** (73 distinct paths; `PUT|PATCH` share a route). Machine-readable index:
+**72 routes** (71 distinct paths; `PUT|PATCH` share a route). Machine-readable index:
 [API_SUMMARY.json](API_SUMMARY.json). Full reference: [API.md](API.md).
 
 | Group | Count | Endpoints |
 | --- | --: | --- |
-| Authentication | 10 | `POST /login`, `POST /staff/login`, `POST /customer/auth/login`, `POST /customer/login` (NIS + PIN check, no token), `GET /staff/me`, `POST /staff/logout`, `GET /customer/me`, `POST /customer/logout`, `POST /customer/logout-all`, `POST /customer/unlock` |
-| Customer activation | 3 | `POST /customer/activation/inspect`, `POST /customer/activation/complete`, `POST /customer/activation/resend` |
-| Accounts (staff side) | 8 | `GET /customers`, `GET /customers/{id}`, `POST /admin/customers`, `PUT/PATCH /admin/customers/{id}`, `POST /admin/customers/{id}/deactivate`, `POST /admin/customers/{id}/invitation`, `GET /admin/customers/{id}/card`, `GET /teller/customers/lookup` |
-| Customer / student (mobile) | 6 | `GET /customer/balance`, `GET /customer/card`, `GET /customer/transactions`, `GET /customer/transactions/{id}`, `GET /customer/statement/export`, `POST /customer/pin` |
+| Authentication | 9 | `POST /login`, `POST /staff/login`, `POST /customer/auth/login`, `GET /staff/me`, `POST /staff/logout`, `GET /customer/me`, `POST /customer/logout`, `POST /customer/logout-all`, `POST /customer/unlock` |
+| Customer activation | 1 | `POST /customer/activation` (NIS + Firebase ID token) |
+| Accounts (staff side) | 8 | `GET /customers`, `GET /customers/{id}`, `POST /admin/customers`, `PUT/PATCH /admin/customers/{id}`, `POST /admin/customers/{id}/deactivate`, `POST /admin/customers/{id}/pin-reset`, `GET /admin/customers/{id}/card`, `GET /teller/customers/lookup` |
+| Customer / student (mobile) | 7 | `GET /customer/balance`, `GET /customer/card`, `GET /customer/transactions`, `GET /customer/transactions/{id}`, `GET /customer/statement/export`, `POST /customer/pin/setup`, `POST /customer/pin` |
 | Withdrawal approval (customer) | 4 | `GET /customer/withdrawal-authorizations`, `GET /customer/withdrawal-authorizations/{id}`, `POST .../{id}/approve`, `POST .../{id}/reject` |
 | Withdrawal approval (teller) | 5 | `POST /teller/withdrawal-authorizations`, `GET /teller/withdrawal-authorizations`, `GET /teller/withdrawal-authorizations/{id}`, `POST .../{id}/cancel`, `POST .../{id}/complete` |
 | Transactions and shift (teller) | 8 | `POST /teller/deposits`, `POST /teller/withdrawals`, `GET /teller/transactions`, `GET /teller/transactions/{id}/receipt`, `POST /teller/transactions/{id}/correct`, `GET /teller/shift`, `POST /teller/shift/open`, `POST /teller/shift/close` |
@@ -94,7 +97,7 @@ One role per staff member; multi-role is not implemented. Details: [RBAC.md](RBA
 | Reference data | 1 | `GET /majors` |
 | Supervisor | 8 | `GET /supervisor/daily-reports`, `GET /supervisor/daily-reports/{id}`, `GET .../{id}/export`, `POST .../{id}/approve`, `POST .../{id}/hold`, `POST .../{id}/reject`, `GET /supervisor/cash-transfers`, `GET /supervisor/cash-transfers/{id}` |
 | Reporting and audit | 8 | `GET /audit/transactions`, `GET /audit/transactions/{id}`, `GET /audit/transactions/export`, `GET /audit/journals`, `GET /audit/journals/summary`, `GET /audit/journals/export`, `GET /reports/annual`, `GET /customers/{id}/statement` |
-| **Total** | **74** | |
+| **Total** | **72** | |
 
 Other routes outside `/api`: `GET /` (Laravel welcome page) and `GET /up` (health
 check). Neither is used by the frontends.
@@ -114,7 +117,7 @@ running the code.
 | L5 | **Graduation balance.** Deactivating an account does not require a zero balance, cannot be undone via the API, and closed accounts cannot be transacted. With a minimum balance > 0, the last Rp10.000 can never be withdrawn. | Warn before deactivation when balance > 0 |
 | L6 | **Staff password limitations.** No self-service password change for staff. Admin accounts cannot be edited at all through the API (including password). An admin can set tellers' and supervisors' passwords. | No "change my password" page for staff |
 | L7 | **No token refresh.** Tokens expire 8 hours after login (absolute); no refresh endpoint. | Re-login on `401` |
-| L8 | **No password/PIN recovery.** No forgot-password or forgot-PIN flow; customer PINs are reset by an admin. | Show "contact the administrator" |
+| L8 | **No staff password / customer PIN self-service recovery.** A forgotten customer PIN is removed by an admin (`pin-reset`) and the customer creates a new one in the app; customer passwords are reset through Firebase. | Show "contact the administrator" for a forgotten PIN |
 | L9 | Mixed languages: business messages Indonesian, field-validation messages English. | Map field errors if a single language is needed |
 | L10 | **Annual report PDF-only.** Annual report, journal report and audit export exist only as PDF; no JSON annual summary. | Show PDFs; build on-screen tables from `/audit/*` JSON |
 | L11 | **Unvalidated filter values** on `/customers` (`status`, `class`, `group`, `major_id`) and `/staff` (`role`, `status`): unknown values return empty lists or defaults instead of `422`. | Use dropdowns with fixed values |
@@ -130,7 +133,7 @@ running the code.
 | L21 | An account graduated between approval and completion makes `complete` answer `404`; the request then expires. | Show the message; start over |
 
 The login PIN gap found in the PIN audit (customer login was not covered by the PIN
-lock) is **closed**: login now uses the shared lock.
+lock) is **closed**: the PIN is no longer a login credential at all.
 
 Unclear or inconsistent behavior is listed in
 [FRONTEND_HANDOFF.md §19](FRONTEND_HANDOFF.md#19-known-inconsistencies-or-unclear-behavior).
@@ -178,11 +181,11 @@ Read before implementing:
 | Filesystem / storage | No files are stored by the application. `storage/` must be writable (logs, framework cache, dompdf font cache in `storage/fonts`); the PHP temp directory must be writable (spreadsheet upload, dompdf temp). No `storage:link` needed |
 | Scheduler | Recommended: `php artisan schedule:work` (development) or `schedule:run` from cron. Prunes expired tokens daily and runs `bank:expire-withdrawal-authorizations` every minute. Expiry is also applied on every read, so the API stays correct without it; the sweep only cleans abandoned rows |
 | Firebase | `FIREBASE_PROJECT_ID`, `FIREBASE_CREDENTIALS` (path to the service account JSON, server only), `FIREBASE_ALLOWED_PROVIDERS`; Firebase Console setup in [CUSTOMER_AUTH.md §6](CUSTOMER_AUTH.md#6-firebase-console-configuration). Project `bank-mini-rumput` ([firebase-web-config.md](firebase-web-config.md)); the key is copied to the server by hand ([DEPLOY.md](DEPLOY.md)) |
-| Mail | `MAIL_*` SMTP settings ([CUSTOMER_AUTH.md §7](CUSTOMER_AUTH.md#7-smtp-configuration)); local `.env` uses `MAIL_MAILER=log`. Production SMTP account: **UNKNOWN** |
-| Customer activation | `CUSTOMER_ACTIVATION_URL` (activation page of the customer app; placeholder until the app exists), `CUSTOMER_ACTIVATION_TOKEN_HOURS`, `CUSTOMER_SESSION_MINUTES` |
-| Bank settings | `BANK_NAME`, `BANK_SCHOOL` (printed on PDFs and emails), `BANK_MIN_BALANCE` (default for the setting), `BANK_PIN_MAX_ATTEMPTS`, `BANK_PIN_LOCK_MINUTES`, `BANK_WITHDRAWAL_AUTH_PENDING_SECONDS`, `BANK_WITHDRAWAL_AUTH_APPROVED_SECONDS`, `SANCTUM_EXPIRATION` (minutes) — all in `.env.example` |
+| Mail | Not used (no SMTP needed) |
+| Customer sessions | `CUSTOMER_SESSION_MINUTES` (default 43200 = 30 days) |
+| Bank settings | `BANK_NAME`, `BANK_SCHOOL` (printed on PDFs), `BANK_MIN_BALANCE` (default for the setting), `BANK_PIN_MAX_ATTEMPTS`, `BANK_PIN_LOCK_MINUTES`, `BANK_WITHDRAWAL_AUTH_PENDING_SECONDS`, `BANK_WITHDRAWAL_AUTH_APPROVED_SECONDS`, `SANCTUM_EXPIRATION` (minutes) — all in `.env.example` |
 | Debug | Local `.env` has `APP_DEBUG=true`, so `500` bodies include stack traces; set `APP_DEBUG=false` outside development |
-| Demo accounts | `admin` / `supervisor` / `teller` with password `password`; customers NIS `20260001`–`20260003`, PIN `123456`, emails `*@example.test`, activation pending (from the seeder; no invitation is sent). Customer app sign-in needs a Firebase project or the Auth emulator ([CUSTOMER_AUTH.md §9](CUSTOMER_AUTH.md#9-local-development-without-a-firebase-project)). The seeded `withdrawal_verification` is the default `mobile`, so withdrawals need the mobile app unless an admin switches to `terminal`/`both` |
+| Demo accounts | `admin` / `supervisor` / `teller` with password `password`; customers NIS `20260001`–`20260003`, emails `*@example.test`, activation pending and **no PIN** (customers create it in the app; to try activation, change a demo customer's email to a real address). Customer app sign-in needs a Firebase project or the Auth emulator ([CUSTOMER_AUTH.md §9](CUSTOMER_AUTH.md#9-local-development-without-a-firebase-project)). The seeded `withdrawal_verification` is the default `mobile`, so withdrawals need the mobile app unless an admin switches to `terminal`/`both` |
 
 ## Backend invariants
 
@@ -218,8 +221,8 @@ Not blocking frontend work, but not finished:
 | Item | State |
 | --- | --- |
 | Mobile approval work | Committed as `2cc6b58` |
-| Firebase customer auth | Committed on top of `4610046` |
-| Developer database | Run `php artisan migrate` to add the customer email/Firebase columns and `customer_activation_tokens` (existing rows are kept; customers become pending). Older databases from before the earlier migration edits still need `migrate:fresh --seed` (destroys their data) |
+| Firebase customer auth | Committed on top of `4610046`; customer-created PIN and activation without emailed links on top of `0cf9e0b` |
+| Developer database | Run `php artisan migrate`: adds the customer email/Firebase columns, makes `pin` nullable and clears the PIN of customers who have not activated, drops the old activation-link table (balances and history are kept). Older databases from before the earlier migration edits still need `migrate:fresh --seed` (destroys their data) |
 | Dependencies | `composer audit` reports 13 advisories, none in the packages added for Firebase: `laravel/framework` 13.24.0 (3, including a critical `TokenGuard` bypass fixed in 13.29.0; this app's guards are `session` and `sanctum`, which do not use `TokenGuard`, but upgrading is recommended), `league/commonmark` (6), `league/flysystem`, `symfony/http-foundation`, `symfony/mime`, `symfony/yaml`. Updating within the existing constraints was not done |
 | Composer script | The `post-update-cmd` script `boost:update` fails because Laravel Boost was never installed (`php artisan boost:install`); run Composer with `--no-scripts` or fix the script |
 | `.env.example` | Defaults to `DB_CONNECTION=sqlite`; the README instructs MariaDB |

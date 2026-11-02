@@ -7,10 +7,10 @@ How the backend authenticates both clients. Source: `routes/api.php`,
 `app/Providers/AppServiceProvider.php`, `config/sanctum.php`, `config/bank.php`,
 `bootstrap/app.php`.
 
-Customers sign in with **Firebase Authentication** (Google or email/password) after a
-first-time activation from an emailed invitation. The full design, Firebase and SMTP setup
-are in [CUSTOMER_AUTH.md](CUSTOMER_AUTH.md); this page summarises how tokens work for both
-actors.
+Customers sign in with **Firebase Authentication** (Google or email/password); the first
+time they activate the account with their NIS and then create their own PIN. The full
+design and Firebase setup are in [CUSTOMER_AUTH.md](CUSTOMER_AUTH.md); this page summarises
+how tokens work for both actors.
 
 ## 1. Mechanism
 
@@ -37,14 +37,12 @@ login runs:
 | --- | --- | --- |
 | `{"username": "...", "password": "..."}` | Admin, supervisor, teller | Staff token. username required (max 255), password required; password must match (bcrypt); account must not be blocked (`is_active`) |
 | `{"id_token": "..."}` | Customer | Customer token from a Firebase ID token (same as `POST /api/customer/auth/login`) |
-| `{"identifier": "...", "pin": "......"}` | Customer | **No token.** NIS/account number + PIN check; after a correct PIN `403 activation_required` or `403 firebase_login_required` (same as `POST /api/customer/login`) |
-
 If `username` is filled the staff login runs; otherwise if `id_token` is filled the
-Firebase customer login runs; otherwise if `identifier` is filled the PIN check runs;
-otherwise `422` with an error on `username`.
+Firebase customer login runs; otherwise `422` with an error on `username`. NIS/account
+number + PIN is not a credential: the PIN never starts a session.
 
-`POST /api/staff/login`, `POST /api/customer/auth/login` and `POST /api/customer/login`
-are aliases that accept only their own body.
+`POST /api/staff/login` and `POST /api/customer/auth/login` are aliases that accept only
+their own body.
 
 **Staff success (200):**
 
@@ -64,27 +62,24 @@ profile is in `data.customer` (see [DATA_MODEL.md](DATA_MODEL.md#customer-custom
 `data.expires_at` gives the session end. Errors carry a `code`; see
 [CUSTOMER_AUTH.md §3](CUSTOMER_AUTH.md#3-endpoints).
 
-**Staff and PIN-check failures (422)** — error key `username` (staff) or `identifier`
-(customer):
+**Staff failures (422)**, error key `username`:
 
 | Message | Cause |
 | --- | --- |
 | `Username atau password salah.` | Unknown username or wrong password |
 | `Akun staf ini sudah dinonaktifkan.` | Correct password but blocked staff |
-| `NIS/nomor rekening atau PIN salah.` | Unknown identifier, wrong PIN, or closed (soft-deleted) account. The remaining attempts are not revealed |
-| `Terlalu banyak percobaan PIN salah. Coba lagi pukul HH:MM.` | The PIN is locked (3 wrong PINs in a row, at the PIN check or anywhere else); shown from the 3rd wrong attempt until the lock ends. Local time |
-| `Rekening ini sudah tidak aktif.` | `inactive` account that is not soft-deleted (not reachable through API flows) |
-| `Isi username dan password (staf), atau masuk dengan akun Google/email (nasabah).` | No credential set sent |
-| Laravel field messages | Missing fields, PIN not 6 digits |
+| `Isi username dan password (staf), atau masuk dengan akun Google/email (nasabah).` | No credential set sent (also for NIS + PIN) |
+| Laravel field messages | Missing fields |
 
-**Rate limit:** 5 attempts per minute per (lowercased username or identifier + IP); a
-request with only `id_token` is limited to 30 per minute per IP. The next one returns
+**Rate limit:** 5 attempts per minute per (lowercased username + IP); a request with only
+`id_token` is limited to 30 per minute per IP. The next one returns
 `429 {"message":"Too Many Attempts."}`. Suspended customers **can** log in.
 
-**PIN lock:** the PIN check uses the same counter as the app unlock, withdrawal approval,
-terminal withdrawals, invitation resend and `POST /customer/pin`. Three wrong PINs in a row
-(anywhere) lock the PIN for 15 minutes; during the lock even the correct PIN is refused.
-NIS and account number lead to the same counter. See
+**PIN:** created by the customer in the app after activation (`POST /customer/pin/setup`,
+with a fresh Firebase ID token); before that every PIN check answers `422 pin_not_set`.
+One counter covers the app unlock, withdrawal approval, terminal withdrawals and
+`POST /customer/pin`: three wrong PINs in a row (anywhere) lock the PIN for 15 minutes,
+and during the lock even the correct PIN is refused. See
 [PIN_VERIFICATION.md](PIN_VERIFICATION.md#2-pin-storage-and-the-shared-lock).
 
 ## 3. Using the token
@@ -154,7 +149,8 @@ API routes never redirect; guests always get JSON `401`.
 
 - Token refresh / sliding sessions.
 - "Remember me" options.
-- Forgot-PIN flow (an administrator resets the PIN). Customer **password** reset and
+- Self-service forgot-PIN (an administrator resets the PIN, and the customer creates a new
+  one in the app). Customer **password** reset and
   change are handled by Firebase in the client (see CUSTOMER_AUTH.md and
   FRONTEND_HANDOFF.md §15.10).
 - Staff password reset or changing their own password (an admin can set passwords of
@@ -182,8 +178,9 @@ API routes never redirect; guests always get JSON `401`.
 - Store the token and `expires_at` with **`expo-secure-store`** (Keychain / Android
   Keystore), not `AsyncStorage`.
 - On app start: read the token → if it has not expired, ask for the PIN
-  (`POST /api/customer/unlock`) → `GET /api/customer/me`; on `401`/`403` delete it, sign
-  out of Firebase and show the sign-in screen.
+  (`POST /api/customer/unlock`; on `422 pin_not_set` show PIN creation) →
+  `GET /api/customer/me`; on `401`/`403` delete it, sign out of Firebase and show the
+  sign-in screen.
 - The base URL must be reachable from the phone (LAN IP or deployed URL, see
   [FRONTEND_HANDOFF.md](FRONTEND_HANDOFF.md#3-api-base-url-configuration)). Plain
   `http://` to a LAN IP may need cleartext traffic allowed in development builds on
@@ -191,5 +188,5 @@ API routes never redirect; guests always get JSON `401`.
 - PIN input: numeric keypad, masked, 6 digits. Do not store the PIN. The same rules
   apply to the PIN pad used to approve a teller's withdrawal request.
 - On the PIN screens, show the lock message as returned (it contains the unlock time).
-- The NIS + PIN rate limit is per identifier + IP, so several phones behind one school
-  Wi-Fi do not block each other; Firebase logins allow 30 per minute per IP.
+- Firebase logins allow 30 per minute per IP and activation 20, so several phones behind
+  one school Wi-Fi do not block each other.

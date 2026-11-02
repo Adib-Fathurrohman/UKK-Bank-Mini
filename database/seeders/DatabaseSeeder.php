@@ -59,10 +59,12 @@ class DatabaseSeeder extends Seeder
         }
 
         // =========================
-        // CUSTOMERS (PIN: "123456")
+        // CUSTOMERS
         // =========================
-        // Seeded accounts are "pending": no invitation is emailed here. Send one
-        // with POST /api/admin/customers/{id}/invitation to activate the app.
+        // Seeded accounts are "pending" and have no PIN: the student activates
+        // the app by signing in with the registered email and entering the NIS,
+        // then creates a PIN. To try it, an administrator first changes the
+        // email to a real address (allowed until activation).
 
         $customers = [
             [
@@ -105,7 +107,6 @@ class DatabaseSeeder extends Seeder
                     'class' => $data['class'],
                     'major_id' => Major::where('major_name', $data['major'])->value('id'),
                     'group' => $data['group'],
-                    'pin' => '123456',
                 ]);
 
             if ($customer->wasRecentlyCreated) {

@@ -2,16 +2,15 @@
 
 namespace App\Exceptions;
 
-use App\Support\Email;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 
 /**
- * A customer login, activation or invitation was refused.
+ * A customer login, activation or PIN setup was refused.
  *
  * Rendered as {"message", "code", ...extra} so the app can react to the
- * machine-readable code. The codes only describe the caller's own identity or
- * link; none of them reveals whether some other email or account exists.
+ * machine-readable code. The codes only describe the caller's own identity;
+ * none of them reveals whether some other email or account exists.
  */
 class CustomerAuthException extends DomainException
 {
@@ -44,16 +43,6 @@ class CustomerAuthException extends DomainException
         return new self('Verifikasi email Anda terlebih dahulu, lalu coba lagi.', 'email_not_verified', 403);
     }
 
-    public static function emailMismatch(string $registeredEmail): self
-    {
-        return new self(
-            'Akun ini memakai email yang berbeda dari email yang didaftarkan sekolah. Masuk dengan akun '.Email::mask($registeredEmail).'.',
-            'email_mismatch',
-            403,
-            ['email' => Email::mask($registeredEmail)],
-        );
-    }
-
     public static function identityAlreadyLinked(): self
     {
         return new self('Akun Google atau email ini sudah terhubung ke rekening lain.', 'identity_already_linked', 409);
@@ -62,7 +51,7 @@ class CustomerAuthException extends DomainException
     public static function accountNotLinked(): self
     {
         return new self(
-            'Akun ini belum terhubung ke rekening. Aktifkan rekening melalui tautan yang dikirim ke email Anda.',
+            'Akun ini belum terhubung ke rekening. Aktifkan rekening dengan memasukkan NIS Anda.',
             'account_not_linked',
             403,
         );
@@ -73,51 +62,40 @@ class CustomerAuthException extends DomainException
         return new self('Rekening ini sudah tidak aktif.', 'account_inactive', 403);
     }
 
-    public static function activationInvalid(): self
-    {
-        return new self('Tautan aktivasi tidak valid atau sudah digunakan.', 'activation_invalid', 404);
-    }
-
-    public static function activationExpired(): self
-    {
-        return new self('Tautan aktivasi sudah kedaluwarsa. Minta tautan baru.', 'activation_expired', 410);
-    }
-
     /**
-     * Correct NIS/PIN, but the account has no Firebase login yet.
+     * Activation: no account with this NIS is registered to the signed-in
+     * email. One answer for an unknown NIS and for another email, so the
+     * response does not reveal which NIS numbers exist or whose email is whose.
      */
-    public static function activationRequired(?string $email): self
+    public static function activationMismatch(): self
     {
         return new self(
-            $email
-                ? 'Rekening belum diaktifkan. Buka tautan aktivasi yang dikirim ke '.Email::mask($email).'.'
-                : 'Rekening belum diaktifkan dan belum memiliki email. Hubungi administrator bank mini.',
-            'activation_required',
-            403,
-            ['email' => $email ? Email::mask($email) : null],
-        );
-    }
-
-    /**
-     * Correct NIS/PIN for an activated account: the PIN alone no longer starts a session.
-     */
-    public static function firebaseLoginRequired(): self
-    {
-        return new self(
-            'Masuk dengan akun Google atau email yang terhubung. PIN dipakai untuk membuka aplikasi dan bertransaksi.',
-            'firebase_login_required',
+            'NIS tidak cocok dengan email akun ini. Masuk dengan email yang didaftarkan di bank mini, atau hubungi petugas.',
+            'activation_mismatch',
             403,
         );
     }
 
     public static function alreadyActivated(): self
     {
-        return new self('Rekening ini sudah diaktifkan.', 'already_activated', 409);
+        return new self(
+            'Rekening ini sudah diaktifkan dengan akun lain. Masuk dengan akun tersebut, atau hubungi petugas bank mini.',
+            'already_activated',
+            409,
+        );
     }
 
-    public static function emailMissing(): self
+    /**
+     * PIN setup with a Firebase account other than the one bound to the session's customer.
+     */
+    public static function identityMismatch(): self
     {
-        return new self('Rekening ini belum memiliki email. Tambahkan email terlebih dahulu.', 'email_missing', 422);
+        return new self('Masuk dengan akun Google atau email yang terhubung ke rekening ini.', 'identity_mismatch', 403);
+    }
+
+    public static function pinAlreadySet(): self
+    {
+        return new self('PIN sudah dibuat. Gunakan ubah PIN untuk menggantinya.', 'pin_already_set', 409);
     }
 
     public function render(): JsonResponse
