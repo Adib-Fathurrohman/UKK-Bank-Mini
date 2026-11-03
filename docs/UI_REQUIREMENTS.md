@@ -343,9 +343,18 @@ Full client contract for these screens: [FRONTEND_HANDOFF.md §15.10](FRONTEND_H
 ### Profile
 - **Endpoint:** `GET /customer/me`.
 
+### Push notifications
+- **Endpoints:** `POST /customer/push-tokens` (`token`, `platform`) after login and PIN
+  creation, on every start while logged in and on FCM token refresh;
+  `DELETE /customer/push-tokens` (`token`) when the customer turns notifications off.
+- **Functions:** ask the notification permission; a push with `data.type =
+  withdrawal_authorization` opens the approval for `data.id` (after the PIN unlock); in
+  the foreground show an in-app banner and refresh the list. Details:
+  [FRONTEND_HANDOFF.md §15.11](FRONTEND_HANDOFF.md#1511-push-notifications-fcm).
+
 ### Withdrawal approval
 - **Endpoints:** `GET /customer/withdrawal-authorizations` (poll every 3–5 s while the
-  screen is visible; also check on app start/foreground),
+  screen is visible, as the fallback for a missed push; also check on app start/foreground),
   `GET /customer/withdrawal-authorizations/{id}`, `POST .../{id}/approve` (`pin`),
   `POST .../{id}/reject`.
 - **Data:** amount (+ words), teller name, current balance and balance after,

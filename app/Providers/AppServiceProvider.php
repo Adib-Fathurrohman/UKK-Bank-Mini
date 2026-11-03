@@ -3,8 +3,10 @@
 namespace App\Providers;
 
 use App\Contracts\FirebaseAuth;
+use App\Contracts\PushNotifier;
 use App\Models\Customer;
 use App\Services\Firebase\KreaitFirebaseAuth;
+use App\Services\Push\FcmPushNotifier;
 use Google\Auth\Cache\FileSystemCacheItemPool;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
@@ -24,27 +26,37 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(FirebaseAuth::class, fn () => new KreaitFirebaseAuth(
-            function () {
-                $credentials = (string) config('services.firebase.credentials');
-                $path = str_starts_with($credentials, '/') ? $credentials : base_path($credentials);
-
-                if ($credentials === '' || ! is_file($path)) {
-                    throw new RuntimeException('Firebase service account file not found: set FIREBASE_CREDENTIALS.');
-                }
-
-                // Google's public keys and the service account's access token are cached on disk between requests.
-                $cache = new FileSystemCacheItemPool(storage_path('framework/cache/firebase'));
-
-                return (new Factory)
-                    ->withServiceAccount($path)
-                    ->withProjectId((string) config('services.firebase.project_id'))
-                    ->withVerifierCache($cache)
-                    ->withAuthTokenCache($cache)
-                    ->createAuth();
-            },
+            fn () => $this->firebaseFactory()->createAuth(),
             config('services.firebase.project_id'),
             config('services.firebase.providers'),
         ));
+
+        // Push notifications (FCM) to the customer app, with the same service account.
+        $this->app->singleton(PushNotifier::class, fn () => new FcmPushNotifier(
+            fn () => $this->firebaseFactory()->createMessaging(),
+        ));
+    }
+
+    /**
+     * The Firebase Admin SDK factory for the configured service account.
+     */
+    private function firebaseFactory(): Factory
+    {
+        $credentials = (string) config('services.firebase.credentials');
+        $path = str_starts_with($credentials, '/') ? $credentials : base_path($credentials);
+
+        if ($credentials === '' || ! is_file($path)) {
+            throw new RuntimeException('Firebase service account file not found: set FIREBASE_CREDENTIALS.');
+        }
+
+        // Google's public keys and the service account's access token are cached on disk between requests.
+        $cache = new FileSystemCacheItemPool(storage_path('framework/cache/firebase'));
+
+        return (new Factory)
+            ->withServiceAccount($path)
+            ->withProjectId((string) config('services.firebase.project_id'))
+            ->withVerifierCache($cache)
+            ->withAuthTokenCache($cache);
     }
 
     /**
@@ -78,6 +90,9 @@ class AppServiceProvider extends ServiceProvider
         // Activation, per IP. Guessing NIS numbers gains nothing: the signed-in
         // verified email must also be the registered one.
         RateLimiter::for('customer-activation', fn (Request $request) => Limit::perMinute(20)->by($request->ip()));
+
+        // Registering and removing push tokens, per customer.
+        RateLimiter::for('customer-push-token', fn (Request $request) => Limit::perMinute(10)->by('customer:'.$request->user()->getAuthIdentifier()));
 
         // Withdrawal authorizations. Named limiters keep separate counters per
         // endpoint group and actor (tellers and customers share numeric ids).

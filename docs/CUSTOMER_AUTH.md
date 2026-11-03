@@ -5,6 +5,7 @@ How customers (students) get into the app:
 - the PIN they create afterwards;
 - Firebase login (Google or email/password) and the long-lived backend session;
 - the PIN as an app unlock, logout and deactivation;
+- push notifications (FCM) for new withdrawal requests (§12);
 - how to configure Firebase.
 
 The backend sends **no email**: Firebase sends its own verification and
@@ -17,11 +18,14 @@ Source:
 - `app/Http/Controllers/API/`: `Customer/AuthController.php`, `Customer/ActivationController.php`,
   `Customer/AccountController.php`, `Admin/CustomerController.php`
 - `app/Exceptions/`: `CustomerAuthException.php`, `PinNotSetException.php`
+- `app/Contracts/PushNotifier.php`, `app/Services/Push/FcmPushNotifier.php`,
+  `app/Http/Controllers/API/Customer/PushTokenController.php`, `app/Models/CustomerPushToken.php`
 - `app/Providers/AppServiceProvider.php`, `config/services.php`, `config/bank.php`
-- migrations `2026_11_02_*`
+- migrations `2026_11_02_*`, `2026_11_03_000002_create_customer_push_tokens_table.php`
 
 Tests: `tests/Feature/`: `CustomerActivationTest.php`, `CustomerPinTest.php`,
-`CustomerFirebaseLoginTest.php`, `CustomerSessionTest.php`, `KreaitFirebaseAuthTest.php`.
+`CustomerFirebaseLoginTest.php`, `CustomerSessionTest.php`, `KreaitFirebaseAuthTest.php`,
+`CustomerPushTokenTest.php`, `FcmPushNotifierTest.php`.
 
 Staff authentication (username + password) is **unchanged**.
 
@@ -101,6 +105,7 @@ All responses are JSON. Customer-auth refusals have the shape
 | `POST /api/customer/pin` | customer | Change the PIN with the current one |
 | `POST /api/customer/unlock` | customer | PIN unlock during a session |
 | `POST /api/customer/logout`, `/logout-all` | customer | Revoke this session / every session |
+| `POST`, `DELETE /api/customer/push-tokens` | customer | Register / remove the phone's FCM token (§12) |
 | `POST /api/admin/customers` | admin | `email` required; **no `pin`** (sending one is a 422) |
 | `PUT\|PATCH /api/admin/customers/{id}` | admin | `email` while pending; **no `pin`** |
 | `POST /api/admin/customers/{id}/pin-reset` | admin | Remove the PIN and its lock |
@@ -228,6 +233,7 @@ student to install the app and sign in with that email.
 | `login` | `/login`, `/staff/login`, `/customer/auth/login` | Staff: 5/min per username + IP; with only `id_token`: 30/min per IP |
 | `customer-activation` | `/customer/activation` | 20/min per IP |
 | `customer-unlock` | `/customer/unlock`, `/customer/pin/setup` | 5/min per customer |
+| `customer-push-token` | `/customer/push-tokens` | 10/min per customer |
 
 The limits for Firebase logins and activation are per IP and generous because a class may
 share one school Wi-Fi address. ID tokens cannot be guessed. Guessing NIS numbers gains
@@ -411,3 +417,31 @@ real email; verification links appear in the emulator UI.
   - Deactivation still succeeds, and logs a warning if the Firebase user can't be disabled.
 - **Not covered:** multi-factor authentication, device binding, revoking backend sessions
   automatically when Firebase sessions are revoked (§5), push notifications.
+
+## 12. Push notifications (FCM)
+
+New withdrawal requests are pushed to the customer's phones through **Firebase Cloud
+Messaging**, with the same service account and project as the login. Client side:
+[FRONTEND_HANDOFF.md §15.11](FRONTEND_HANDOFF.md#1511-push-notifications-fcm).
+
+| Item | Detail |
+| --- | --- |
+| Registration | `POST /customer/push-tokens {token, platform: android \| ios}` → 201 / 200; `DELETE` with `{token}` turns pushes off for that phone |
+| Storage | `customer_push_tokens`: `customer_id`, `personal_access_token_id` (the session that registered it, cascade on delete), `token` (unique, max 255), `platform` |
+| Lifetime | Logout, logout-all, deactivation and session expiry delete the session and its push token. A token seen again (shared phone) moves to the customer who registered it last |
+| Trigger | `WithdrawalAuthorizationService::create()`, after the request is committed, via `defer()` (after the response) and `rescue()` |
+| Message | `notification` (title `Permintaan penarikan`, body with teller name and amount), `data` `{type: "withdrawal_authorization", id: <request id>}`, high priority, default sound; sent with `sendMulticast` to every token of the customer |
+| Clean-up | Tokens FCM reports as invalid or unknown are deleted |
+| Failure | Logged as a warning (`Push notification could not be sent.`), never thrown; the app still polls |
+| Not configured | Without `FIREBASE_CREDENTIALS` nothing is sent (warning logged when a customer with registered phones gets a request) |
+
+Firebase setup for push:
+1. **Cloud Messaging API (V1):** enabled on `bank-mini-rumput`, verified with a
+   validate-only send.
+2. **App registration:** register the Android and iOS apps with the final bundle IDs; the
+   app needs `google-services.json` / `GoogleService-Info.plist`.
+3. **iOS:** upload an APNs authentication key (Project settings → Cloud Messaging).
+
+`App\Contracts\PushNotifier` keeps FCM replaceable; tests bind
+`Tests\Support\FakePushNotifier` (`fakePush()`). Polling stays the source of truth; a
+push is only a faster hint.

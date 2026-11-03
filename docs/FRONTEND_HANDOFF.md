@@ -113,6 +113,7 @@ re-checks every request.
 | Login / logout / profile | `POST /login`; `GET /staff/me`, `POST /staff/logout`; `POST /customer/auth/login`, `GET /customer/me`, `POST /customer/logout`, `POST /customer/logout-all` | all |
 | Customer activation (public) | `POST /customer/activation` `{nis, id_token}` | customer (no token yet) |
 | Customer PIN creation / app unlock | `POST /customer/pin/setup` `{id_token, pin, pin_confirmation}`; `POST /customer/unlock` `{pin}` | customer |
+| Customer push notifications (FCM) | `POST /customer/push-tokens` `{token, platform}`, `DELETE /customer/push-tokens` `{token}` (§15.11) | customer |
 | Reference data | `GET /majors`, `GET /settings` | any staff |
 | Staff list / detail | `GET /staff`, `GET /staff/{id}` | admin, supervisor |
 | Staff create / edit / block / unblock / delete / import | `POST /admin/staff`, `PATCH /admin/staff/{id}`, `POST /admin/staff/{id}/block`, `.../unblock`, `DELETE /admin/staff/{id}`, `POST /admin/staff/import` | admin |
@@ -134,7 +135,7 @@ re-checks every request.
 | Mobile: balance, history, card, PIN, statement PDF | `GET /customer/balance`, `GET /customer/transactions`, `GET /customer/transactions/{id}`, `GET /customer/card`, `POST /customer/pin`, `GET /customer/statement/export` | customer |
 | Mobile: approve/reject a withdrawal | `GET /customer/withdrawal-authorizations[/{id}]`, `POST .../{id}/approve` `{pin}`, `POST .../{id}/reject` | customer |
 
-All 72 API routes are listed in [RBAC.md](RBAC.md#7-endpoint-restrictions).
+All 74 API routes are listed in [RBAC.md](RBAC.md#7-endpoint-restrictions).
 
 ## 7. Request requirements
 
@@ -401,8 +402,9 @@ TELLER        Enters amount → "Kirim ke aplikasi nasabah"
               Poll GET /api/teller/withdrawal-authorizations/{id} every 2 s
               On a reload: GET /api/teller/withdrawal-authorizations?status=open to resume
 
-CUSTOMER      Opens the app (or is already on the "Persetujuan" screen)
-→ ENDPOINT    GET /api/customer/withdrawal-authorizations   (poll every 3–5 s while visible)
+CUSTOMER      Gets a push "Permintaan penarikan" (FCM, data {type, id}, §15.11) and opens the
+              app, or is already on the "Persetujuan" screen
+→ ENDPOINT    GET /api/customer/withdrawal-authorizations   (poll every 3–5 s while visible, as the fallback)
 → UI          Card: amount + terbilang, teller name, balance → balance after, countdown;
               buttons "Tolak" and "Setujui" → masked 6-digit PIN pad
 → ENDPOINT    POST /api/customer/withdrawal-authorizations/{id}/approve {"pin":"......"}
@@ -644,6 +646,142 @@ the user's other Firebase sessions but **not** backend sessions on other devices
 - **"Reset PIN":** a button calling `POST /admin/customers/{id}/pin-reset` (no PIN input).
   It removes the PIN, and the student creates a new one in the app.
 
+### 15.11 Push notifications (FCM)
+
+Withdrawal requests reach the customer as a **push notification through Firebase Cloud
+Messaging**. The backend sends it with its service account (project `bank-mini-rumput`);
+the app only needs the FCM registration token. Expo's own push service
+(`ExponentPushToken`) is **not** used: get the native FCM token with React Native Firebase.
+Backend side: [CUSTOMER_AUTH.md §12](CUSTOMER_AUTH.md#12-push-notifications-fcm).
+
+#### Setup (Expo + React Native Firebase)
+
+| Need | Package |
+| --- | --- |
+| FCM token and messages | `@react-native-firebase/app`, `@react-native-firebase/messaging` |
+| Native config | `expo-build-properties` (iOS: `useFrameworks: "static"`) |
+| Notification permission on Android 13+ and iOS | `messaging().requestPermission()` (iOS) and `PermissionsAndroid` `POST_NOTIFICATIONS` (Android 13+) |
+
+React Native Firebase needs a **development build** (`npx expo prebuild` / EAS Build). It
+does not run in Expo Go.
+
+Firebase configuration (project `bank-mini-rumput`, see
+[firebase-web-config.md](firebase-web-config.md)):
+
+1. Register the apps in the Firebase project with the final bundle IDs:
+   - **Android:** package name.
+   - **iOS:** bundle ID.
+   
+   Ask the backend owner, or use the Firebase console (Project settings → General → Add app).
+2. Download `google-services.json` (Android) and `GoogleService-Info.plist` (iOS) into the
+   app project. These files identify the app and are not secret. The **service account key
+   is never in the app**.
+3. iOS only: upload an APNs authentication key in the Firebase console (Project settings →
+   Cloud Messaging), otherwise iOS devices get no pushes.
+4. `app.json` / `app.config.ts`:
+
+```json
+{
+  "expo": {
+    "android": { "package": "id.rumput.bankmini", "googleServicesFile": "./google-services.json" },
+    "ios": { "bundleIdentifier": "id.rumput.bankmini", "googleServicesFile": "./GoogleService-Info.plist" },
+    "plugins": [
+      "@react-native-firebase/app",
+      ["expo-build-properties", { "ios": { "useFrameworks": "static" } }]
+    ]
+  }
+}
+```
+
+(`id.rumput.bankmini` is an example; use the real IDs.)
+
+
+#### Token and messages
+
+When a teller creates a withdrawal request, the backend sends a push to every phone the
+customer has registered:
+
+| Field | Value |
+| --- | --- |
+| `notification.title` | `Permintaan penarikan` |
+| `notification.body` | `Teller {name} meminta persetujuan penarikan Rp50.000. Buka aplikasi untuk menyetujui atau menolak.` |
+| `data.type` | `withdrawal_authorization` |
+| `data.id` | The request id (for `GET /api/customer/withdrawal-authorizations/{id}`) |
+
+Android priority is high and the default sound is set.
+
+**Register the token** after the login (and after the PIN is created), on every app start
+while logged in, and when FCM rotates it:
+
+```ts
+import messaging from '@react-native-firebase/messaging';
+import { PermissionsAndroid, Platform } from 'react-native';
+
+async function registerPush(api: Api) {
+  if (Platform.OS === 'android' && Platform.Version >= 33) {
+    const result = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
+    if (result !== PermissionsAndroid.RESULTS.GRANTED) return; // polling still works
+  }
+  if (Platform.OS === 'ios') {
+    const status = await messaging().requestPermission();
+    if (status === messaging.AuthorizationStatus.DENIED) return;
+  }
+
+  const token = await messaging().getToken();
+  await api.post('/customer/push-tokens', { token, platform: Platform.OS }); // 201 new, 200 known
+}
+
+// FCM may rotate the token at any time.
+messaging().onTokenRefresh(token => api.post('/customer/push-tokens', { token, platform: Platform.OS }));
+```
+
+**React to a push:**
+
+```ts
+// App in the foreground: FCM does not show a system notification. Show an in-app
+// banner and refresh the approvals list.
+messaging().onMessage(async message => {
+  if (message.data?.type === 'withdrawal_authorization') {
+    showBanner(message.notification?.title, message.notification?.body);
+    refreshApprovals();
+  }
+});
+
+// App in the background, user tapped the notification.
+messaging().onNotificationOpenedApp(message => openApproval(message.data?.id));
+
+// App was closed, opened by tapping the notification.
+const initial = await messaging().getInitialNotification();
+if (initial?.data?.id) openApproval(initial.data.id);
+```
+
+`openApproval(id)` goes through the normal checks:
+1. Valid session.
+2. PIN unlock if needed (or PIN creation if `pin_set` is false).
+3. `GET /api/customer/withdrawal-authorizations/{id}`.
+4. Show the request.
+
+Never approve from the notification itself; the PIN is always required in the app.
+
+**Turn pushes off** (settings switch): `DELETE /api/customer/push-tokens` with body
+`{"token": "<current FCM token>"}` → `200`.
+
+| Endpoint | Body | Response |
+| --- | --- | --- |
+| `POST /api/customer/push-tokens` | `{token (max 255), platform: "android" \| "ios"}` | `201` registered / `200` already known: `{"message": "Notifikasi aktif di perangkat ini."}` |
+| `DELETE /api/customer/push-tokens` | `{token}` | `200 {"message": "Notifikasi dimatikan di perangkat ini."}` (also when unknown) |
+
+Both need a customer session and are limited to 10 per minute.
+
+A token belongs to the session that registered it. Logout, logout-all, deactivation and
+session expiry remove it automatically. On a shared phone, the
+last customer to log in gets the pushes.
+
+**Push is a convenience, not a guarantee.** A push can be delayed or never arrive
+(permission denied, battery savers, no Google Play services). Keep **polling** `GET
+/api/customer/withdrawal-authorizations` every 3–5 s while the approvals screen is open,
+exactly as before.
+
 ## 16. Pagination, filtering, sorting
 
 - Paginated endpoints: `GET /staff`, `/customers`, `/teller/transactions`,
@@ -699,7 +837,7 @@ These are current behaviors. They are documented, not fixed.
 | L15 | `customers.balance` is a 32-bit integer (max Rp2.147.483.647). | Not a practical concern for a school |
 | L16 | Idempotency keys never expire; reusing an old key for a new transaction returns `422`. | Always generate a fresh key per new transaction |
 | L17 | The QR payload is the plain account number (not signed); it identifies but does not authorize. Withdrawals still need the customer's PIN (in the app or at the terminal). | Never treat a scan as authorization |
-| L19 | Withdrawal requests are delivered by polling; there are no push notifications. The customer must have the app open (or refresh) to see a request. | Tell the customer to open the "Persetujuan" screen; poll while visible |
+| L19 | New withdrawal requests are pushed (FCM, §15.11), but a push can be late or missing (permission denied, battery savers, no Google Play services, FCM not configured). The teller's waiting screen still polls. | Keep polling while the "Persetujuan" screen is open |
 | L20 | Any device where the customer is logged in can approve a request (tokens have no abilities). | Optionally ask for device biometrics before showing the approval PIN pad |
 | L18 | No sort parameters on any list; orders are fixed per endpoint (see §16). | Sort client-side within a page only, or accept the server order |
 | L21 | Revoking a user in the Firebase console, or a Firebase password change, does not end backend sessions that already exist (Firebase is checked at login, activation and PIN setup only). | Offer `logout-all` after a password change; admins deactivate to cut access |
@@ -722,7 +860,7 @@ These are current behaviors. They are documented, not fixed.
 
 Customer self-registration (accounts are created by an administrator; the student activates them in the app) · customer-initiated transactions or transfers between
 accounts (customers only approve teller-started withdrawals) · loans, term deposits,
-fees · notifications/push (use polling) · approval in the app for deposits or corrections · "forgot PIN"
+fees · push notifications other than new withdrawal requests · approval in the app for deposits or corrections · "forgot PIN"
 (admin reset only) · staff password reset · staff self-service profile/password · restoring graduated accounts ·
 major management · multi-role users · attendance (absensi) integration · bulk
 approval of reports · editing or deleting transactions · JSON annual report ·

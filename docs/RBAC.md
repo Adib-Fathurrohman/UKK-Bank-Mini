@@ -40,7 +40,7 @@ implemented.
 | `staff:admin,supervisor` (etc.) | `EnsureStaffRole` | As above, plus `role` must be in the list. Otherwise `403 "Peran Anda tidak memiliki akses ke fitur ini."` |
 | `customer` | `EnsureCustomer` | Token must belong to a `Customer` whose status is not `inactive`. Otherwise `403 "Fitur ini khusus untuk nasabah."` / `"Rekening ini sudah tidak aktif."` |
 | `throttle:login` | Rate limiter | 5 attempts per minute per username/identifier + IP on login routes; requests with only `id_token`: 30 per minute per IP (`429`) |
-| `throttle:customer-activation`, `customer-unlock` | Rate limiters | Activation 20/min per IP; unlock and PIN setup 5/min per customer (`429`) |
+| `throttle:customer-activation`, `customer-unlock`, `customer-push-token` | Rate limiters | Activation 20/min per IP; unlock and PIN setup 5/min per customer; push tokens 10/min per customer (`429`) |
 | `throttle:10,1` | Rate limiter | 10 corrections per minute per teller (`429`) |
 
 The role middleware runs **before** route model binding, so a caller with the
@@ -154,7 +154,7 @@ Notes:
 
 ## 7. Endpoint restrictions
 
-All 72 API routes (`php artisan route:list --path=api`). Prefix `/api`.
+All 74 API routes (`php artisan route:list --path=api`). Prefix `/api`.
 
 | Method | Path | Middleware (beyond `api`) |
 | --- | --- | --- |
@@ -191,6 +191,7 @@ All 72 API routes (`php artisan route:list --path=api`). Prefix `/api`.
 | GET | `/customer/me`, `/customer/balance`, `/customer/card`, `/customer/transactions`, `/customer/transactions/{transaction}`, `/customer/statement/export` | `auth:sanctum`, `customer` |
 | POST | `/customer/logout`, `/customer/logout-all`, `/customer/pin` | `auth:sanctum`, `customer` |
 | POST | `/customer/unlock`, `/customer/pin/setup` | `auth:sanctum`, `customer`, `throttle:customer-unlock` |
+| POST, DELETE | `/customer/push-tokens` | `auth:sanctum`, `customer`, `throttle:customer-push-token` |
 | GET | `/customer/withdrawal-authorizations`, `/customer/withdrawal-authorizations/{withdrawalAuthorization}` | `auth:sanctum`, `customer`, `throttle:withdrawal-authorization-poll` + ownership |
 | POST | `/customer/withdrawal-authorizations/{withdrawalAuthorization}/approve`, `/reject` | `auth:sanctum`, `customer`, `throttle:withdrawal-authorization-decide` + ownership |
 

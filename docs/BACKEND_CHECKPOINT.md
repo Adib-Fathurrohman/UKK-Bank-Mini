@@ -65,6 +65,8 @@ One role per staff member; multi-role is not implemented. Details: [RBAC.md](RBA
   mode (`withdrawal_verification` setting).
 - One PIN lock (3 wrong → 15 minutes) shared by the app unlock, approval, terminal
   withdrawal and PIN change. No withdrawal before the customer has created a PIN.
+- Push notifications (FCM) of new withdrawal requests to the customer's phones; the app
+  polls as the fallback.
 - Corrections (reversal transactions) authorized by a supervisor's credentials.
 - Double-entry journal (101 Kas / 201 Tabungan) written automatically.
 - Supervisor review: approve (moves cash to the vault), hold, reject (reopens shift);
@@ -79,7 +81,7 @@ One role per staff member; multi-role is not implemented. Details: [RBAC.md](RBA
 
 ## API status
 
-**72 routes** (71 distinct paths; `PUT|PATCH` share a route). Machine-readable index:
+**74 routes** (71 distinct paths; `PUT|PATCH` share a route). Machine-readable index:
 [API_SUMMARY.json](API_SUMMARY.json). Full reference: [API.md](API.md).
 
 | Group | Count | Endpoints |
@@ -97,7 +99,8 @@ One role per staff member; multi-role is not implemented. Details: [RBAC.md](RBA
 | Reference data | 1 | `GET /majors` |
 | Supervisor | 8 | `GET /supervisor/daily-reports`, `GET /supervisor/daily-reports/{id}`, `GET .../{id}/export`, `POST .../{id}/approve`, `POST .../{id}/hold`, `POST .../{id}/reject`, `GET /supervisor/cash-transfers`, `GET /supervisor/cash-transfers/{id}` |
 | Reporting and audit | 8 | `GET /audit/transactions`, `GET /audit/transactions/{id}`, `GET /audit/transactions/export`, `GET /audit/journals`, `GET /audit/journals/summary`, `GET /audit/journals/export`, `GET /reports/annual`, `GET /customers/{id}/statement` |
-| **Total** | **72** | |
+| Push notifications (customer) | 2 | `POST /customer/push-tokens`, `DELETE /customer/push-tokens` |
+| **Total** | **74** | |
 
 Other routes outside `/api`: `GET /` (Laravel welcome page) and `GET /up` (health
 check). Neither is used by the frontends.

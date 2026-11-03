@@ -40,6 +40,19 @@ Native builds (Android/iOS) need their own app registrations in the Firebase pro
 (Android: package name plus SHA-1/SHA-256 of the signing keys). Register them when the Expo
 app gets its bundle identifiers.
 
+## Push notifications (FCM)
+
+The backend pushes new withdrawal requests to the customer's phones through Firebase Cloud
+Messaging (API V1 enabled, verified with a validate-only send). The Expo app gets the FCM
+token with `@react-native-firebase/messaging` (development build) and needs:
+
+| Platform | File | How to get it |
+|---|---|---|
+| Android | `google-services.json` | Project settings → General → Add app → Android, with the final package name |
+| iOS | `GoogleService-Info.plist` | Add app → iOS, with the final bundle ID; also upload an APNs key under Cloud Messaging |
+
+These files are not secret. Client guide: [FRONTEND_HANDOFF.md §15.11](FRONTEND_HANDOFF.md#1511-push-notifications-fcm).
+
 ## Project settings applied
 
 | Setting | Value |

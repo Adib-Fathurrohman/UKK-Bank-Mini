@@ -120,6 +120,10 @@
       "firebase_sign_in_provider": [
         "password",
         "google.com"
+      ],
+      "push_platform": [
+        "android",
+        "ios"
       ]
     },
     "rate_limiters": {
@@ -128,7 +132,8 @@
       "withdrawal-authorization-poll": "120 per minute per actor (teller or customer)",
       "withdrawal-authorization-decide": "5 per minute per customer",
       "customer-activation": "20 per minute per IP",
-      "customer-unlock": "5 per minute per customer (unlock and PIN setup)"
+      "customer-unlock": "5 per minute per customer (unlock and PIN setup)",
+      "customer-push-token": "10 per minute per customer"
     }
   },
   "actions": {
@@ -1243,7 +1248,8 @@
         "422 account not active",
         "422 {message, code:'pin_not_set'} the customer has not created a PIN yet",
         "422 {message, code:'customer_app_not_activated'} the customer has not activated the app"
-      ]
+      ],
+      "notes": "After the response, an FCM push goes to the customer's registered phones (failures only logged)."
     },
     "Teller\\WithdrawalAuthorizationController@index": {
       "purpose": "The teller's own withdrawal requests created today, newest first; ?status=open returns only the open one (to resume after a reload).",
@@ -1504,6 +1510,51 @@
       "errors": [
         "404 closed or unknown account"
       ]
+    },
+    "Customer\\PushTokenController@store": {
+      "purpose": "Register the phone's FCM token for push notifications of new withdrawal requests; tied to the current session.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "body": {
+          "token": {
+            "type": "string",
+            "required": true,
+            "rules": "FCM registration token, max 255"
+          },
+          "platform": {
+            "type": "string",
+            "required": true,
+            "rules": "android | ios"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 (new) or 200 (already known) {message:'Notifikasi aktif di perangkat ini.'}",
+      "errors": [
+        "422 validation",
+        "429"
+      ],
+      "notes": "A token registered by another customer (shared phone) moves to the caller. Logout, logout-all, deactivation and session expiry delete it. Push payload: notification {title 'Permintaan penarikan', body with teller and amount}, data {type:'withdrawal_authorization', id}."
+    },
+    "Customer\\PushTokenController@destroy": {
+      "purpose": "Stop push notifications to this phone.",
+      "ownership": "only the caller's own tokens",
+      "request": {
+        "body": {
+          "token": {
+            "type": "string",
+            "required": true,
+            "rules": "max 255"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {message:'Notifikasi dimatikan di perangkat ini.'} (also when unknown)",
+      "errors": [
+        "422 validation",
+        "429"
+      ],
+      "notes": ""
     }
   }
 }

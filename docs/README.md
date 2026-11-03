@@ -30,7 +30,7 @@ Also available:
 | --- | --- |
 | [BACKEND_CHECKPOINT.md](BACKEND_CHECKPOINT.md) | Handoff status: technology versions, endpoint counts, limitations, environment requirements, invariants the frontend must respect |
 | [PIN_VERIFICATION.md](PIN_VERIFICATION.md) | How customers authorize withdrawals: approval with PIN in the mobile app (default) or PIN at the teller terminal; the shared PIN lock; concurrency and security design |
-| [API_SUMMARY.json](API_SUMMARY.json) | Machine-readable index of all 72 endpoints (method, path, auth, roles, request fields, validation, response, errors), generated from the route list. For coding agents; does not replace API.md |
+| [API_SUMMARY.json](API_SUMMARY.json) | Machine-readable index of all 74 endpoints (method, path, auth, roles, request fields, validation, response, errors), generated from the route list. For coding agents; does not replace API.md |
 
 ## Which document is authoritative for what
 
@@ -52,7 +52,7 @@ Also available:
 
 All documents are derived from the backend implementation:
 
-- routes and middleware from `php artisan route:list` (72 API routes);
+- routes and middleware from `php artisan route:list` (74 API routes);
 - validation from `app/Http/Requests` and inline `validate()` calls;
 - behavior from `app/Services` and the controllers;
 - response shapes from `app/Http/Resources`;

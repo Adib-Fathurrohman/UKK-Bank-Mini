@@ -213,6 +213,7 @@ Matches the matrix in the UKK soal (section III.1).
 | `GET` | `/customer/me`, `/customer/balance`, `/customer/card` | Nasabah |
 | `GET` | `/customer/transactions`, `/customer/transactions/{id}`, `/customer/statement/export` (PDF) | Nasabah |
 | `POST` | `/customer/pin/setup` · `/customer/pin` · `/customer/unlock` · `/customer/logout` · `/customer/logout-all` | Nasabah |
+| `POST`, `DELETE` | `/customer/push-tokens` | Nasabah |
 | `GET` | `/customer/withdrawal-authorizations`, `/customer/withdrawal-authorizations/{id}` | Nasabah |
 | `POST` | `/customer/withdrawal-authorizations/{id}/approve`, `/reject` | Nasabah |
 
@@ -362,6 +363,30 @@ Until a PIN exists, everything that needs it answers **422**:
 
 (`/customer/unlock`, `/customer/pin`, approving a withdrawal, `/teller/withdrawals`,
 `/teller/withdrawal-authorizations`). No wrong attempt is counted.
+
+---
+
+#### `POST /customer/push-tokens` · `DELETE /customer/push-tokens`
+
+**Nasabah.** The phone's Firebase Cloud Messaging token, so the backend can push new
+withdrawal requests. Client setup: [FRONTEND_HANDOFF.md §15.11](FRONTEND_HANDOFF.md#1511-push-notifications-fcm).
+
+| Field | Rules |
+| --- | --- |
+| `token` | required, string, max 255 (FCM registration token) |
+| `platform` | `android` or `ios` (required for `POST`) |
+
+`POST` → **201** (new) or **200** (already known) `{ "message": "Notifikasi aktif di perangkat ini." }`.
+The token belongs to the current session: logout, logout-all, deactivation and session
+expiry remove it. A token already registered by another customer (shared phone) moves to
+the caller. `DELETE` with `{token}` → **200** `{ "message": "Notifikasi dimatikan di perangkat ini." }`
+(only the caller's own tokens). 10 per minute.
+
+When a teller creates a withdrawal request, each registered phone gets a push:
+notification title `Permintaan penarikan`, body `Teller {name} meminta persetujuan
+penarikan Rp50.000. Buka aplikasi untuk menyetujui atau menolak.`, data
+`{ "type": "withdrawal_authorization", "id": "<request id>" }`. It is sent after the
+teller's response; a failure only logs a warning. The app keeps polling as the fallback.
 
 ---
 
@@ -953,6 +978,10 @@ for `activation_status: pending` (in every mode; such a customer has no PIN, so 
 terminal cannot be used either), and `422 pin_not_set` for an activated customer without a
 PIN. An inactive account is reported first, with the usual account-status error.
 
+A created request is pushed to the customer's phones (FCM, see
+[push tokens](#post-customerpush-tokens--delete-customerpush-tokens)) after the response;
+the app also polls.
+
 #### `GET /teller/withdrawal-authorizations` · `GET /teller/withdrawal-authorizations/{id}`
 
 The list returns the teller's own requests created today, newest first (paginated,
@@ -1249,6 +1278,7 @@ parameters are ignored.
 | `GET /customer/statement/export` | Own statement as PDF |
 | `POST /customer/pin/setup` | Create the PIN, see [above](#post-customerpinsetup) |
 | `POST /customer/pin` | Change PIN |
+| `POST`, `DELETE /customer/push-tokens` | Register / remove the phone's FCM token, see [above](#post-customerpush-tokens--delete-customerpush-tokens) |
 | `POST /customer/unlock` | `{pin}` → `200 {"message":"PIN benar."}`: unlock the app during a session. Wrong PIN `422` with `remaining_attempts`; `422 pin_not_set` before a PIN exists; shared lock; 5 per minute |
 | `POST /customer/logout` | Revoke the current token |
 | `POST /customer/logout-all` | Revoke all tokens of the customer |

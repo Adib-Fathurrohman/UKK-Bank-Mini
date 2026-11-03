@@ -7,6 +7,7 @@ use App\Http\Controllers\API\Audit\TransactionController as AuditTransactionCont
 use App\Http\Controllers\API\Customer\AccountController as CustomerAccountController;
 use App\Http\Controllers\API\Customer\ActivationController as CustomerActivationController;
 use App\Http\Controllers\API\Customer\AuthController as CustomerAuthController;
+use App\Http\Controllers\API\Customer\PushTokenController as CustomerPushTokenController;
 use App\Http\Controllers\API\Customer\WithdrawalAuthorizationController as CustomerWithdrawalAuthorizationController;
 use App\Http\Controllers\API\LoginController;
 use App\Http\Controllers\API\MajorController;
@@ -159,6 +160,12 @@ Route::middleware(['auth:sanctum', 'customer'])->prefix('customer')->group(funct
     Route::get('transactions', [CustomerAccountController::class, 'transactions']);
     Route::get('statement/export', [CustomerAccountController::class, 'statement']);
     Route::get('transactions/{transaction}', [CustomerAccountController::class, 'transaction'])->whereNumber('transaction');
+
+    // The phone's FCM token, for push notifications of withdrawal requests.
+    Route::middleware('throttle:customer-push-token')->group(function () {
+        Route::post('push-tokens', [CustomerPushTokenController::class, 'store']);
+        Route::delete('push-tokens', [CustomerPushTokenController::class, 'destroy']);
+    });
 
     // Approve (with PIN) or reject withdrawals a teller started for this account.
     Route::middleware('throttle:withdrawal-authorization-poll')->group(function () {

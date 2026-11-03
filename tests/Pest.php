@@ -9,8 +9,10 @@ use App\Services\DailyReportService;
 use App\Support\Cash;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use App\Contracts\FirebaseAuth;
+use App\Contracts\PushNotifier;
 use Laravel\Sanctum\Sanctum;
 use Tests\Support\FakeFirebaseAuth;
+use Tests\Support\FakePushNotifier;
 use Tests\TestCase;
 
 /*
@@ -114,6 +116,18 @@ function fakeFirebase(): FakeFirebaseAuth
     $fake = new FakeFirebaseAuth;
 
     app()->instance(FirebaseAuth::class, $fake);
+
+    return $fake;
+}
+
+/**
+ * Replace FCM push notifications with the in-memory fake for this test.
+ */
+function fakePush(): FakePushNotifier
+{
+    $fake = new FakePushNotifier;
+
+    app()->instance(PushNotifier::class, $fake);
 
     return $fake;
 }

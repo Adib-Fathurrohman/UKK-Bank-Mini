@@ -154,6 +154,8 @@ Daftar endpoint, parameter, dan contoh respons ada di [docs/API.md](docs/API.md)
 - **Blokir PIN:** 3 kali PIN salah berturut-turut (buka aplikasi, persetujuan, penarikan
   di loket, atau ganti PIN) memblokir PIN selama 15 menit di semua
   tempat.
+- **Notifikasi push:** permintaan penarikan baru dikirim sebagai notifikasi push (FCM)
+  ke HP nasabah; aplikasi tetap melakukan polling sebagai cadangan.
 - **Login nasabah:** sesi nasabah hanya dibuat dari ID token Firebase yang terverifikasi
   (login Google atau email/password). Aktivasi pertama: nasabah memasukkan NIS, dan email
   Firebase yang sudah terverifikasi harus sama dengan email yang didaftarkan admin. Email

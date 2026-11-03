@@ -88,4 +88,9 @@ class Customer extends Authenticatable
     {
         return $this->hasMany(WithdrawalAuthorization::class);
     }
+
+    public function pushTokens()
+    {
+        return $this->hasMany(CustomerPushToken::class);
+    }
 }

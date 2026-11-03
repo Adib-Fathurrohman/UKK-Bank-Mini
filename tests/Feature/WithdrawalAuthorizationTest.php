@@ -652,6 +652,44 @@ test('an inactive account is reported before the missing activation', function (
 
 /*
 |--------------------------------------------------------------------------
+| Push notification (FCM)
+|--------------------------------------------------------------------------
+*/
+
+test('a new request is pushed to the customer once the teller has the answer', function () {
+    $push = fakePush();
+    $this->teller->update(['full_name' => 'Teller Loket 1']);
+
+    $id = requestWithdrawal(50000)->assertCreated()->json('data.id');
+
+    expect($push->sent)->toHaveCount(1)
+        ->and($push->sent[0])->toBe([
+            'customer_id' => $this->customer->id,
+            'title' => 'Permintaan penarikan',
+            'body' => 'Teller Teller Loket 1 meminta persetujuan penarikan Rp50.000. Buka aplikasi untuk menyetujui atau menolak.',
+            'data' => ['type' => 'withdrawal_authorization', 'id' => $id],
+        ]);
+});
+
+test('a refused request sends no push', function () {
+    $push = fakePush();
+
+    requestWithdrawal(999999999)->assertUnprocessable();
+
+    expect($push->sent)->toBe([]);
+});
+
+test('a failing push never fails the teller\'s request', function () {
+    $push = fakePush();
+    $push->failing = true;
+
+    requestWithdrawal()->assertCreated();
+
+    expect(WithdrawalAuthorization::count())->toBe(1);
+})->throwsNoExceptions();
+
+/*
+|--------------------------------------------------------------------------
 | Model and database guards
 |--------------------------------------------------------------------------
 */

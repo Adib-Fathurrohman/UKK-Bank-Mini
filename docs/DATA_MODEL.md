@@ -257,6 +257,18 @@ At most one open request per customer and per teller.
 | `qr_scanner_mode` | `webcam`, `usb`, `disabled` | `webcam` | How the teller UI should read QR cards (informational) |
 | `withdrawal_verification` | `mobile`, `terminal`, `both` | `mobile` | Approval in the customer's app, PIN at the teller terminal, or either |
 
+## Customer push token (`customer_push_tokens`)
+
+FCM registration tokens of the customer's phones, for push notifications of new
+withdrawal requests. Never returned by the API.
+
+| Column | Meaning |
+| --- | --- |
+| `customer_id` | Owner (cascade on delete) |
+| `personal_access_token_id` | The session that registered it; deleting the session (logout, logout-all, deactivation, expiry) deletes the token |
+| `token` | FCM registration token, unique, ≤ 255 |
+| `platform` | `android` or `ios` |
+
 ## User / role relationships
 
 - Staff and customers are **different tables and models**. A customer is not a `users`

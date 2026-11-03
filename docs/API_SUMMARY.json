@@ -1,7 +1,7 @@
 {
   "name": "E-Teller Bank Mini API",
   "source_of_truth": "Laravel backend implementation (routes, form requests, controllers, services, resources). This file is a generated index; see docs/API.md for examples.",
-  "generated_from_commit": "55d2bcf",
+  "generated_from_commit": "4641779-dirty",
   "base_url": "{APP_URL}/api (UNKNOWN for deployments; local default http://localhost:8000/api)",
   "conventions": {
     "headers": {
@@ -120,9 +120,13 @@
     "firebase_sign_in_provider": [
       "password",
       "google.com"
+    ],
+    "push_platform": [
+      "android",
+      "ios"
     ]
   },
-  "route_count": 72,
+  "route_count": 74,
   "endpoints": [
     {
       "method": "POST",
@@ -918,6 +922,71 @@
         "503 auth_unavailable",
         "429"
       ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/customer/push-tokens",
+      "auth": "bearer",
+      "actor": "customer",
+      "roles": [
+        "customer"
+      ],
+      "purpose": "Register the phone's FCM token for push notifications of new withdrawal requests; tied to the current session.",
+      "rate_limit": [
+        "10 per minute per customer"
+      ],
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "body": {
+          "token": {
+            "type": "string",
+            "required": true,
+            "rules": "FCM registration token, max 255"
+          },
+          "platform": {
+            "type": "string",
+            "required": true,
+            "rules": "android | ios"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 (new) or 200 (already known) {message:'Notifikasi aktif di perangkat ini.'}",
+      "errors": [
+        "422 validation",
+        "429"
+      ],
+      "notes": "A token registered by another customer (shared phone) moves to the caller. Logout, logout-all, deactivation and session expiry delete it. Push payload: notification {title 'Permintaan penarikan', body with teller and amount}, data {type:'withdrawal_authorization', id}."
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/customer/push-tokens",
+      "auth": "bearer",
+      "actor": "customer",
+      "roles": [
+        "customer"
+      ],
+      "purpose": "Stop push notifications to this phone.",
+      "rate_limit": [
+        "10 per minute per customer"
+      ],
+      "ownership": "only the caller's own tokens",
+      "request": {
+        "body": {
+          "token": {
+            "type": "string",
+            "required": true,
+            "rules": "max 255"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {message:'Notifikasi dimatikan di perangkat ini.'} (also when unknown)",
+      "errors": [
+        "422 validation",
+        "429"
+      ],
+      "notes": ""
     },
     {
       "method": "GET",
@@ -1913,7 +1982,8 @@
         "422 account not active",
         "422 {message, code:'pin_not_set'} the customer has not created a PIN yet",
         "422 {message, code:'customer_app_not_activated'} the customer has not activated the app"
-      ]
+      ],
+      "notes": "After the response, an FCM push goes to the customer's registered phones (failures only logged)."
     },
     {
       "method": "GET",

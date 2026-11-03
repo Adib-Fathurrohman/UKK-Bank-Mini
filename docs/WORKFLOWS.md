@@ -197,8 +197,8 @@ Details and the security design: [PIN_VERIFICATION.md](PIN_VERIFICATION.md).
 | --- | --- |
 | Actor | Teller (creates and completes), customer (approves in the app with their PIN) |
 | Preconditions | As deposit; mode `mobile`/`both`; account `active`; app activated (`422 customer_app_not_activated`); PIN created (`422 pin_not_set`) and not locked; balance − amount ≥ minimum balance; no open request of this teller and none for this customer |
-| User action | Teller enters the amount and sends the request → customer opens the app, checks amount, teller and balance after, enters the PIN (or rejects) → teller sees "approved" and completes |
-| Backend operation | 1. `POST /teller/withdrawal-authorizations`: DB transaction locking teller, shift, customer; pre-checks; insert `pending` row (`expires_at` = now + 120 s). 2. `POST /customer/withdrawal-authorizations/{id}/approve`: `PinService::verify` (own DB transaction), then compare-and-set `pending → approved` (`approval_expires_at` = now + 120 s). 3. `POST /teller/withdrawal-authorizations/{id}/complete`: one DB transaction locking teller, shift, the request (must be `approved`, unexpired, same shift), customer; balance −= amount; insert transaction; `approved → consumed` with `transaction_id`; journal |
+| User action | Teller enters the amount and sends the request → the customer gets a push (FCM) and opens the app, checks amount, teller and balance after, enters the PIN (or rejects) → teller sees "approved" and completes |
+| Backend operation | 1. `POST /teller/withdrawal-authorizations`: DB transaction locking teller, shift, customer; pre-checks; insert `pending` row (`expires_at` = now + 120 s); after the response, a push to the customer's registered phones (`PushNotifier`, failures only logged). 2. `POST /customer/withdrawal-authorizations/{id}/approve`: `PinService::verify` (own DB transaction), then compare-and-set `pending → approved` (`approval_expires_at` = now + 120 s). 3. `POST /teller/withdrawal-authorizations/{id}/complete`: one DB transaction locking teller, shift, the request (must be `approved`, unexpired, same shift), customer; balance −= amount; insert transaction; `approved → consumed` with `transaction_id`; journal |
 | Validation | `account_number`, `amount` as deposit; `pin` exactly 6 digits on approve |
 | Database effect | `withdrawal_authorizations` row through its states; on completion the same effects as 6B plus `consumed_at` and `transaction_id`. PIN counter as in 6B (wrong PIN on approve leaves the request `pending`) |
 | API response | Create `201` (pending); approve `200` (approved); complete `201` Transaction with `withdrawal_authorization`, `200` with the same transaction when repeated |
@@ -348,6 +348,7 @@ API. Majors cannot be managed through the API.
 | Statement PDF | `GET /customer/statement/export?from=&to=` | PDF download |
 | Change PIN | `POST /customer/pin` `{current_pin, new_pin, new_pin_confirmation}` | Verifies current PIN with the shared lock counter; updates hash. `422` with `remaining_attempts` on a wrong current PIN |
 | Withdrawal requests | `GET /customer/withdrawal-authorizations` (poll while the app is open) | Own open requests with amount, teller name, balance and balance after, deadlines |
+| Push notifications | `POST` / `DELETE /customer/push-tokens` `{token, platform}` | Registers the phone's FCM token (tied to the session); a push arrives for each new withdrawal request |
 | Approve withdrawal | `POST /customer/withdrawal-authorizations/{id}/approve` `{pin}` | See 6A. `422` with `remaining_attempts` on a wrong PIN |
 | Reject withdrawal | `POST /customer/withdrawal-authorizations/{id}/reject` | `pending → rejected` |
 | Logout | `POST /customer/logout` · `/customer/logout-all` | Revokes the current token / all tokens; the app also signs out of Firebase |
@@ -367,6 +368,6 @@ withdrawal a teller started for their account.
 - Cash movement from the vault to tellers.
 - PIN reset by the user (an admin removes it; the customer then creates a new one); staff password reset or self-service change; managing admin accounts. (Customer passwords are reset and changed in Firebase by the client.)
 - Major management; multi-role users; attendance integration.
-- Notifications (push, WhatsApp) and transaction emails; withdrawal requests are delivered by polling. (The backend sends no email at all; Firebase sends its own verification and password-reset emails.)
+- Notifications other than the FCM push for new withdrawal requests (no WhatsApp, no emails, no push for approvals or deposits). The backend sends no email; Firebase sends its own verification and password-reset emails.
 - Approval in the app for deposits or corrections (withdrawals only).
 - JSON version of the annual report.
