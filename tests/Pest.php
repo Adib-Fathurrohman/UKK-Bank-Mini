@@ -8,9 +8,9 @@ use App\Models\User;
 use App\Services\DailyReportService;
 use App\Support\Cash;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use App\Contracts\FirebaseAuth;
+use App\Contracts\PushNotifier;
 use Laravel\Sanctum\Sanctum;
-use Tests\Support\FakeFirebaseAuth;
+use Tests\Support\FakePushNotifier;
 use Tests\TestCase;
 
 /*
@@ -107,13 +107,13 @@ function actingAsCustomer(array $attributes = []): Customer
 }
 
 /**
- * Replace Firebase Authentication with the in-memory fake for this test.
+ * Replace FCM push notifications with the in-memory fake for this test.
  */
-function fakeFirebase(): FakeFirebaseAuth
+function fakePush(): FakePushNotifier
 {
-    $fake = new FakeFirebaseAuth;
+    $fake = new FakePushNotifier;
 
-    app()->instance(FirebaseAuth::class, $fake);
+    app()->instance(PushNotifier::class, $fake);
 
     return $fake;
 }

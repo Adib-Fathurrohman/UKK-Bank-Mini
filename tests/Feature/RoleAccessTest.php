@@ -30,7 +30,8 @@ $endpoints = [
     'customer statement' => ['GET', '/api/customers/1/statement', ['admin', 'supervisor']],
     'receipt' => ['GET', '/api/teller/transactions/1/receipt', ['teller']],
     'own statement export' => ['GET', '/api/customer/statement/export', ['customer']],
-    'create own PIN' => ['POST', '/api/customer/pin/setup', ['customer']],
+    'register push token' => ['POST', '/api/customer/push-tokens', ['customer']],
+    'remove push token' => ['DELETE', '/api/customer/push-tokens', ['customer']],
     'look up customer' => ['GET', '/api/teller/customers/lookup', ['teller']],
     'deposit' => ['POST', '/api/teller/deposits', ['teller']],
     'withdraw' => ['POST', '/api/teller/withdrawals', ['teller']],
@@ -77,14 +78,11 @@ test('each endpoint is reachable only by its allowed actors', function (string $
     }
 })->with($endpoints)->with(['admin', 'supervisor', 'teller', 'customer', 'guest']);
 
-test('every API route except login and activation requires a Sanctum token and an actor check', function () {
-    // Public on purpose: the credentials (password, or Firebase ID token with the NIS) are the proof.
-    $public = ['api/customer/activation'];
-
+test('every API route except login requires a Sanctum token and an actor check', function () {
+    // Public on purpose: the credentials (password, or NIS/account number + PIN) are the proof.
     $routes = collect(Route::getRoutes()->getRoutes())
         ->filter(fn ($route) => str_starts_with($route->uri(), 'api/')
-            && ! str_ends_with($route->uri(), '/login')
-            && ! in_array($route->uri(), $public, true));
+            && ! str_ends_with($route->uri(), '/login'));
 
     $unprotected = $routes->reject(function ($route) {
         $middleware = collect($route->gatherMiddleware());

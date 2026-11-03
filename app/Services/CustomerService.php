@@ -2,46 +2,52 @@
 
 namespace App\Services;
 
-use App\Contracts\FirebaseAuth;
 use App\Enums\AccountStatus;
-use App\Exceptions\CustomerAuthException;
 use App\Models\Customer;
 use App\Models\Major;
 use App\Support\SchoolYear;
 use Carbon\CarbonInterface;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 
 class CustomerService
 {
-    public function __construct(private FirebaseAuth $firebase)
+    public function __construct(private PinService $pins)
     {
     }
 
     /**
-     * Open a new savings account with a generated account number.
+     * Open a new savings account with a generated account number and a
+     * temporary PIN, which the customer must replace at the first login.
+     *
+     * @param  string|null  $temporaryPin  only for demo data; normally generated
+     * @return array{0: Customer, 1: string} the account and its temporary PIN (shown once)
      */
-    public function create(array $data): Customer
+    public function create(array $data, ?string $temporaryPin = null): array
     {
         $major = Major::findOrFail($data['major_id']);
+        $temporaryPin ??= $this->pins->temporaryPin();
 
         // Two admins creating accounts at the same moment could compute the same
         // next number; the unique index catches it and we simply try again.
-        return retry(3, fn () => Customer::create([
+        $customer = retry(3, fn () => Customer::create([
             ...$data,
             'account_number' => $this->nextAccountNumber($major, now()),
             'account_status' => AccountStatus::ACTIVE,
             'balance' => 0,
+            'pin' => $temporaryPin,
+            'pin_must_change' => true,
         ]), when: fn ($e) => $e instanceof UniqueConstraintViolationException
             && str_contains($e->getMessage(), 'account_number'));
+
+        return [$customer, $temporaryPin];
     }
 
     /**
      * Close the account of a graduated student (FR-Rek-03).
      *
      * The row is kept (soft delete) so its transactions and journals stay intact.
-     * All app sessions end.
+     * All app sessions end, and with them the push tokens.
      */
     public function deactivate(Customer $customer): Customer
     {
@@ -50,17 +56,6 @@ class CustomerService
             $customer->tokens()->delete();
             $customer->delete();
         });
-
-        // Also stop the Firebase account from getting new ID tokens. The backend
-        // refuses closed accounts anyway, so a Firebase outage must not undo
-        // or block the deactivation; it is logged for a manual follow-up.
-        if ($customer->firebase_uid) {
-            try {
-                $this->firebase->disableUser($customer->firebase_uid);
-            } catch (CustomerAuthException) {
-                Log::warning('Could not disable the Firebase user of a deactivated customer.', ['customer_id' => $customer->id]);
-            }
-        }
 
         return $customer;
     }

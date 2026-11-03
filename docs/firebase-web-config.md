@@ -1,59 +1,44 @@
-# Firebase web config (customer app)
+# Firebase project (push notifications)
 
-Firebase project **`bank-mini-rumput`** ("Bank Mini"), web app "Bank Mini Customer". The
-customer Expo app (Phase 5) initializes the Firebase JS SDK with this config. Only the client
-signs in to Firebase; the backend verifies the resulting ID token (see
-[CUSTOMER_AUTH.md](CUSTOMER_AUTH.md) and [FRONTEND_HANDOFF.md](FRONTEND_HANDOFF.md) §15.10).
+Firebase project **`bank-mini-rumput`** ("Bank Mini"). On this branch
+(`feature/nis-pin-login`) customers sign in with NIS + PIN, and Firebase is used **only for
+push notifications** through Firebase Cloud Messaging (FCM). See
+[CUSTOMER_AUTH.md](CUSTOMER_AUTH.md) §4 and [FRONTEND_NIS_PIN_FCM.md](FRONTEND_NIS_PIN_FCM.md)
+§2.6.
 
-This config is **not secret**: it identifies the project and is shipped inside every client
-build. What protects the project is the backend's token verification, the sign-in provider
-allow-list and the authorized domains below. The service account key is a different thing
-and never goes into the app.
+## Customer app (Expo, React Native Firebase)
 
-```ts
-// customer app: src/lib/firebase.ts
-import { initializeApp } from 'firebase/app';
+The app uses `@react-native-firebase/app` + `@react-native-firebase/messaging`, configured
+by the platform files, not by a JS config object:
 
-export const firebaseConfig = {
-  apiKey: 'AIzaSyDF6DTMnhUQ52aicODJ6c2zNDdOseH_498',
-  authDomain: 'bank-mini-rumput.firebaseapp.com',
-  projectId: 'bank-mini-rumput',
-  storageBucket: 'bank-mini-rumput.firebasestorage.app',
-  messagingSenderId: '418347097835',
-  appId: '1:418347097835:web:1cd0c891b5d6ca53dfe8ae',
-};
+| Platform | File | How to get it |
+|---|---|---|
+| Android | `google-services.json` | Firebase console → Project settings → General → Add app → Android, with the final package name |
+| iOS | `GoogleService-Info.plist` | Same, Add app → iOS, with the final bundle ID; also upload an APNs key under Cloud Messaging |
 
-export const firebaseApp = initializeApp(firebaseConfig);
-```
-
-For Expo, the usual place is `app.config.ts` `extra` or `EXPO_PUBLIC_FIREBASE_*` variables;
-the values are the same.
-
-## Google Sign-In
+These files identify the project and are **not secret**. The service account key is a
+different thing and never goes into the app.
 
 | Item | Value |
 |---|---|
-| Web OAuth client ID (for native Google Sign-In libraries, `webClientId`) | `418347097835-04u09164m68atrthg908gl5slg2ppfvs.apps.googleusercontent.com` |
-| Auth handler (OAuth redirect) | `https://bank-mini-rumput.firebaseapp.com/__/auth/handler` |
+| Project ID | `bank-mini-rumput` |
+| Project number (FCM sender ID) | `418347097835` |
+| Firebase Cloud Messaging API (V1) | Enabled (verified with a validate-only send from the backend) |
 
-Native builds (Android/iOS) need their own app registrations in the Firebase project
-(Android: package name plus SHA-1/SHA-256 of the signing keys). Register them when the Expo
-app gets its bundle identifiers.
+A web app ("Bank Mini Customer", app ID `1:418347097835:web:1cd0c891b5d6ca53dfe8ae`) is also
+registered. It is only needed for an Expo **web** build. Web push would also need a VAPID
+key and is not used.
 
-## Project settings applied
+## Firebase Authentication (unused on this branch)
 
-| Setting | Value |
-|---|---|
-| Sign-in providers | Email/Password (password required, no email link), Google |
-| Backend allow-list | `FIREBASE_ALLOWED_PROVIDERS=password,google.com` |
-| Authorized domains | `localhost`, `bank.rumput.tech`, `app.rumput.tech` (plus the default `bank-mini-rumput.firebaseapp.com`, `bank-mini-rumput.web.app`) |
-| Email template language | Indonesian (`id`), sender name "Bank Mini" |
-| Email enumeration protection | enabled |
-| Public app name (OAuth consent) | Bank Mini |
+The project still has Email/Password and Google sign-in, authorized domains (`localhost`,
+`bank.rumput.tech`, `app.rumput.tech`) and Indonesian email templates configured from the
+Firebase-login version on `main`. They are not used here; leave them or disable them in
+the console.
 
 ## Backend
 
 | Variable | Value |
 |---|---|
 | `FIREBASE_PROJECT_ID` | `bank-mini-rumput` |
-| `FIREBASE_CREDENTIALS` | `storage/app/private/firebase-credentials.json` (service account `firebase-adminsdk-fbsvc@bank-mini-rumput.iam.gserviceaccount.com`; git-ignored, never in the app) |
+| `FIREBASE_CREDENTIALS` | `storage/app/private/firebase-credentials.json` (service account `firebase-adminsdk-fbsvc@bank-mini-rumput.iam.gserviceaccount.com`; git-ignored, never in the app). Without it the backend works but sends no pushes |

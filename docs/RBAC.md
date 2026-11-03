@@ -9,7 +9,7 @@ a few ownership checks in controllers, and business rules in services.
 
 | Layer | Question | Where | Failure |
 | --- | --- | --- | --- |
-| **Authentication** | Who is calling? | `auth:sanctum` on every route except login and customer activation | `401 Unauthenticated.` |
+| **Authentication** | Who is calling? | `auth:sanctum` on every route except login | `401 Unauthenticated.` |
 | **Authorization** | Is this actor/role allowed to call this endpoint? Is this record theirs? | `staff`, `staff:{roles}`, `customer` middleware; controller ownership checks | `403` (role) or `404` (not theirs) |
 | **Business rules** | Is the action allowed in the current state? | Services (shift state, balance, PIN, report status, ...) | `422` |
 | **Frontend visibility** | Which menus and buttons to show | React / Expo code | — |
@@ -26,7 +26,7 @@ for usability.
 | Administrator | `App\Models\User` | `admin` | Created by the seeder; cannot be created, edited, blocked or deleted through the API |
 | Supervisor | `User` | `supervisor` | |
 | Teller | `User` | `teller` | Usually a student on duty (`class`, `phone` fields) |
-| Customer ("User" in the matrix below; nasabah) | `App\Models\Customer` | — (separate model) | Students; sign in with Firebase (Google or email/password), activate once with their NIS, then create their own PIN, which unlocks the app and approves withdrawals ([CUSTOMER_AUTH.md](CUSTOMER_AUTH.md)) |
+| Customer ("User" in the matrix below; nasabah) | `App\Models\Customer` | — (separate model) | Students; sign in with NIS or account number + PIN; the first PIN is a temporary one from the system that must be replaced at the first login; the PIN also unlocks the app and approves withdrawals ([CUSTOMER_AUTH.md](CUSTOMER_AUTH.md)) |
 
 A staff member has exactly one role (`users.role`). Multi-role users are not
 implemented.
@@ -39,15 +39,16 @@ implemented.
 | `staff` | `EnsureStaffRole` | Token must belong to a `User`, and `is_active` must be true. Otherwise `403 "Fitur ini khusus untuk staf bank."` / `"Akun staf ini sudah dinonaktifkan."` |
 | `staff:admin,supervisor` (etc.) | `EnsureStaffRole` | As above, plus `role` must be in the list. Otherwise `403 "Peran Anda tidak memiliki akses ke fitur ini."` |
 | `customer` | `EnsureCustomer` | Token must belong to a `Customer` whose status is not `inactive`. Otherwise `403 "Fitur ini khusus untuk nasabah."` / `"Rekening ini sudah tidak aktif."` |
-| `throttle:login` | Rate limiter | 5 attempts per minute per username/identifier + IP on login routes; requests with only `id_token`: 30 per minute per IP (`429`) |
-| `throttle:customer-activation`, `customer-unlock` | Rate limiters | Activation 20/min per IP; unlock and PIN setup 5/min per customer (`429`) |
+| `throttle:login` | Rate limiter | 5 attempts per minute per username/identifier + IP on login routes (`429`) |
+| `throttle:customer-unlock`, `customer-push-token` | Rate limiters | Unlock 5/min, push tokens 10/min per customer (`429`) |
+| `pin.changed` (`EnsurePinChanged`) | Customer gate | While the customer has the temporary PIN, every customer route except `me`, `pin`, `logout`, `logout-all` answers `428 pin_change_required` |
 | `throttle:10,1` | Rate limiter | 10 corrections per minute per teller (`429`) |
 
 The role middleware runs **before** route model binding, so a caller with the
 wrong role always gets `403` and cannot learn from `404` vs `200` whether a record
 id exists. This is covered by `tests/Feature/RoleAccessTest.php`, which checks
 every listed endpoint for every actor, and verifies that every API route except
-the login routes and the three public `/customer/activation/*` routes has both
+the login routes has both
 `auth:sanctum` and an actor middleware.
 
 ## 4. Controller-level checks
@@ -77,8 +78,7 @@ Only capabilities that exist in the backend. "User" = customer (nasabah).
 | Create, edit, block, unblock, delete, import tellers/supervisors | ✓ | — | — | — |
 | List / view customer accounts (incl. closed) | ✓ | ✓ | — | — |
 | Open account, edit, reset (remove) PIN, suspend, graduate (deactivate); set the email of a pending account | ✓ | — | — | — |
-| Activate own account (Firebase sign-in with the registered email + NIS) | — | — | — | ✓ (public, proof by verified email + NIS) |
-| Create own PIN (after activation, with a fresh Firebase sign-in); unlock the app with it; log out of all own sessions | — | — | — | ✓ |
+| Replace the temporary PIN; unlock the app with own PIN; log out of all own sessions; register the phone for push notifications | — | — | — | ✓ |
 | Customer card data (QR payload) for printing | ✓ | — | — | — |
 | Customer statement PDF (any customer) | ✓ | ✓ | — | — |
 | Look up one customer by QR / account number / NIS | — | — | ✓ | — |
@@ -158,8 +158,7 @@ All 72 API routes (`php artisan route:list --path=api`). Prefix `/api`.
 
 | Method | Path | Middleware (beyond `api`) |
 | --- | --- | --- |
-| POST | `/login`, `/staff/login`, `/customer/auth/login` | `throttle:login` (public) |
-| POST | `/customer/activation` | `throttle:customer-activation` (public; the Firebase verified email + NIS are the proof) |
+| POST | `/login`, `/staff/login`, `/customer/login` | `throttle:login` (public) |
 | GET | `/staff/me` · POST `/staff/logout` | `auth:sanctum`, `staff` |
 | GET | `/majors`, `/settings` | `auth:sanctum`, `staff` |
 | GET | `/staff`, `/staff/{staff}` | `staff:admin,supervisor` |
@@ -188,11 +187,12 @@ All 72 API routes (`php artisan route:list --path=api`). Prefix `/api`.
 | GET | `/supervisor/daily-reports`, `/supervisor/daily-reports/{dailyReport}`, `/supervisor/daily-reports/{dailyReport}/export` | `staff:supervisor` |
 | POST | `/supervisor/daily-reports/{dailyReport}/approve`, `/hold`, `/reject` | `staff:supervisor` |
 | GET | `/supervisor/cash-transfers`, `/supervisor/cash-transfers/{cashTransfer}` | `staff:supervisor` |
-| GET | `/customer/me`, `/customer/balance`, `/customer/card`, `/customer/transactions`, `/customer/transactions/{transaction}`, `/customer/statement/export` | `auth:sanctum`, `customer` |
-| POST | `/customer/logout`, `/customer/logout-all`, `/customer/pin` | `auth:sanctum`, `customer` |
-| POST | `/customer/unlock`, `/customer/pin/setup` | `auth:sanctum`, `customer`, `throttle:customer-unlock` |
-| GET | `/customer/withdrawal-authorizations`, `/customer/withdrawal-authorizations/{withdrawalAuthorization}` | `auth:sanctum`, `customer`, `throttle:withdrawal-authorization-poll` + ownership |
-| POST | `/customer/withdrawal-authorizations/{withdrawalAuthorization}/approve`, `/reject` | `auth:sanctum`, `customer`, `throttle:withdrawal-authorization-decide` + ownership |
+| GET | `/customer/balance`, `/customer/card`, `/customer/transactions`, `/customer/transactions/{transaction}`, `/customer/statement/export` | `auth:sanctum`, `customer`, `pin.changed` |
+| GET | `/customer/me` · POST `/customer/logout`, `/customer/logout-all`, `/customer/pin` | `auth:sanctum`, `customer` (allowed with the temporary PIN) |
+| POST | `/customer/unlock` | `auth:sanctum`, `customer`, `pin.changed`, `throttle:customer-unlock` |
+| POST, DELETE | `/customer/push-tokens` | `auth:sanctum`, `customer`, `pin.changed`, `throttle:customer-push-token` |
+| GET | `/customer/withdrawal-authorizations`, `/customer/withdrawal-authorizations/{withdrawalAuthorization}` | `auth:sanctum`, `customer`, `pin.changed`, `throttle:withdrawal-authorization-poll` + ownership |
+| POST | `/customer/withdrawal-authorizations/{withdrawalAuthorization}/approve`, `/reject` | `auth:sanctum`, `customer`, `pin.changed`, `throttle:withdrawal-authorization-decide` + ownership |
 
 Every `staff:*` route also has `auth:sanctum` and `staff`.
 

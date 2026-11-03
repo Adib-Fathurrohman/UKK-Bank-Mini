@@ -2,9 +2,9 @@
 
 namespace App\Providers;
 
-use App\Contracts\FirebaseAuth;
+use App\Contracts\PushNotifier;
 use App\Models\Customer;
-use App\Services\Firebase\KreaitFirebaseAuth;
+use App\Services\Push\FcmPushNotifier;
 use Google\Auth\Cache\FileSystemCacheItemPool;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
@@ -23,28 +23,22 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        $this->app->singleton(FirebaseAuth::class, fn () => new KreaitFirebaseAuth(
-            function () {
-                $credentials = (string) config('services.firebase.credentials');
-                $path = str_starts_with($credentials, '/') ? $credentials : base_path($credentials);
+        // Firebase is only used for push notifications (FCM) to the customer app.
+        $this->app->singleton(PushNotifier::class, fn () => new FcmPushNotifier(function () {
+            $credentials = (string) config('services.firebase.credentials');
+            $path = str_starts_with($credentials, '/') ? $credentials : base_path($credentials);
 
-                if ($credentials === '' || ! is_file($path)) {
-                    throw new RuntimeException('Firebase service account file not found: set FIREBASE_CREDENTIALS.');
-                }
+            if ($credentials === '' || ! is_file($path)) {
+                throw new RuntimeException('Firebase service account file not found: set FIREBASE_CREDENTIALS.');
+            }
 
-                // Google's public keys and the service account's access token are cached on disk between requests.
-                $cache = new FileSystemCacheItemPool(storage_path('framework/cache/firebase'));
-
-                return (new Factory)
-                    ->withServiceAccount($path)
-                    ->withProjectId((string) config('services.firebase.project_id'))
-                    ->withVerifierCache($cache)
-                    ->withAuthTokenCache($cache)
-                    ->createAuth();
-            },
-            config('services.firebase.project_id'),
-            config('services.firebase.providers'),
-        ));
+            return (new Factory)
+                ->withServiceAccount($path)
+                ->withProjectId((string) config('services.firebase.project_id'))
+                // The service account's access token is cached on disk between requests.
+                ->withAuthTokenCache(new FileSystemCacheItemPool(storage_path('framework/cache/firebase')))
+                ->createMessaging();
+        }));
     }
 
     /**
@@ -63,21 +57,18 @@ class AppServiceProvider extends ServiceProvider
             return $isValid;
         });
 
-        // Staff password logins are limited per username and IP address. A
-        // Firebase ID token cannot be guessed, so customer logins are only
-        // limited per IP, generously enough for a class behind one school
-        // Wi-Fi address.
+        // A 6-digit PIN only has a million combinations, so login attempts are
+        // limited per account identifier and IP address (the PIN lock is the
+        // real protection). Per identifier, so a class behind one school Wi-Fi
+        // address does not block itself.
         RateLimiter::for('login', function (Request $request) {
-            if ($request->filled('id_token') && ! $request->filled('username')) {
-                return Limit::perMinute(30)->by('firebase|'.$request->ip());
-            }
+            $identifier = (string) ($request->input('username') ?? $request->input('identifier'));
 
-            return Limit::perMinute(5)->by(Str::lower((string) $request->input('username')).'|'.$request->ip());
+            return Limit::perMinute(5)->by(Str::lower($identifier).'|'.$request->ip());
         });
 
-        // Activation, per IP. Guessing NIS numbers gains nothing: the signed-in
-        // verified email must also be the registered one.
-        RateLimiter::for('customer-activation', fn (Request $request) => Limit::perMinute(20)->by($request->ip()));
+        // Registering and removing push tokens, per customer.
+        RateLimiter::for('customer-push-token', fn (Request $request) => Limit::perMinute(10)->by('customer:'.$request->user()->getAuthIdentifier()));
 
         // Withdrawal authorizations. Named limiters keep separate counters per
         // endpoint group and actor (tellers and customers share numeric ids).

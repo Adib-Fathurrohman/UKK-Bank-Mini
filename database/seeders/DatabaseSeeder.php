@@ -59,12 +59,11 @@ class DatabaseSeeder extends Seeder
         }
 
         // =========================
-        // CUSTOMERS
+        // CUSTOMERS (temporary PIN: "123456")
         // =========================
-        // Seeded accounts are "pending" and have no PIN: the student activates
-        // the app by signing in with the registered email and entering the NIS,
-        // then creates a PIN. To try it, an administrator first changes the
-        // email to a real address (allowed until activation).
+        // Like every new account, they must replace the temporary PIN at the
+        // first login (the system normally generates it; demo data uses a
+        // known one).
 
         $customers = [
             [
@@ -100,14 +99,14 @@ class DatabaseSeeder extends Seeder
 
         foreach ($customers as $data) {
             $customer = Customer::withTrashed()->firstWhere('nis', $data['nis'])
-                ?? $customerService->create([
+                ?? $customerService->create(temporaryPin: '123456', data: [
                     'nis' => $data['nis'],
                     'full_name' => $data['full_name'],
                     'email' => $data['email'],
                     'class' => $data['class'],
                     'major_id' => Major::where('major_name', $data['major'])->value('id'),
                     'group' => $data['group'],
-                ]);
+                ])[0];
 
             if ($customer->wasRecentlyCreated) {
                 $newAccounts[] = [$customer, $data['opening_balance']];

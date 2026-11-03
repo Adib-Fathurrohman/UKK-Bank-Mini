@@ -52,10 +52,8 @@ Students' savings accounts (nasabah). Resources: `CustomerResource` (full),
 | `account_number` | string | no | Generated, unique, never editable. Format below |
 | `nis` | string ≤ 20 | no | Student number; unique; used by the teller lookup and by the customer to activate the app |
 | `full_name` | string | no | |
-| `email` | string ≤ 255 | yes | Registered email (lowercase, unique). Required for new accounts; null for older ones until an admin adds it. Not editable after activation. Not in the teller lookup |
-| `activation_status` | `pending` \| `activated` | no | Derived from `activated_at`: `pending` until the customer activates the app with a Firebase account ([CUSTOMER_AUTH.md](CUSTOMER_AUTH.md)) |
-| `activated_at` | timestamp | yes | When the app was activated |
-| `pin_set` | boolean | no | Whether the customer has created a PIN (in the app, after activation; false again after an admin reset). Also in the teller lookup |
+| `email` | string ≤ 255 | yes | Optional contact email (lowercase, unique). Not in the teller lookup |
+| `pin_must_change` | boolean | no | `true` while the customer has the temporary PIN from the system (new account, or after an admin reset); no withdrawal until it is replaced. Also in the teller lookup |
 | `class` | enum | no | `X`, `XI`, `XII` |
 | `group` | enum | no | `1`–`4` (the parallel class, e.g. XI RPL **2**) |
 | `major` | object | no | `{id, code, major_name}` (lookup returns only `major_name`; card returns `{code, major_name}`) |
@@ -66,13 +64,21 @@ Students' savings accounts (nasabah). Resources: `CustomerResource` (full),
 | `pin_locked_until` | timestamp | yes | **Lookup only.** The PIN is locked until then: unlock, approval and withdrawals are refused (shown only while in the future) |
 | `qr_payload` | string | no | **Card only.** `BANKMINI:{account_number}`; render as a QR code |
 
-Never returned: `pin` (hash), `pin_failed_attempts`, `firebase_uid` (the bound Firebase
-user, unique), `email_verified_at`.
+Never returned: `pin` (hash), `pin_failed_attempts`. The temporary PIN appears only in
+the admin create and PIN-reset responses (`temporary_pin`).
 
-Database rules: `email` and `firebase_uid` are unique;
-`CHECK (activated_at IS NULL OR firebase_uid IS NOT NULL)`; `pin` is nullable (bcrypt) and
-`CHECK (pin IS NULL OR activated_at IS NOT NULL)`, so only an activated customer can have
-a PIN.
+Database rules: `email` is unique; `pin` is NOT NULL (bcrypt).
+
+### Customer push token (`customer_push_tokens`)
+
+FCM registration tokens of the customer's phones. Never returned by the API.
+
+| Column | Meaning |
+| --- | --- |
+| `customer_id` | Owner (cascade on delete) |
+| `personal_access_token_id` | The session that registered it; deleting the session (logout, logout-all, PIN reset, deactivation, expiry) deletes the token |
+| `token` | FCM registration token, unique, ≤ 255 |
+| `platform` | `android` or `ios` |
 
 ### Account number format
 
@@ -93,10 +99,9 @@ a PIN.
 | `suspended` | ✓ | — | ✓ | ✓ | Admin edit |
 | `inactive` | — | — | — | — | Only by deactivation (graduation), which also soft-deletes the account |
 
-"Login" means the app login, which also needs `activation_status = activated`.
-Activation is independent of `account_status`: a pending account receives deposits at the
-counter, but no withdrawal is possible until the customer has activated the app and
-created a PIN.
+"Login" means the app login with NIS or account number + PIN. A customer who still has
+the temporary PIN (`pin_must_change`) can receive deposits, but no withdrawal is possible
+until they replace it in the app.
 
 ## Major (`majors`)
 
@@ -265,8 +270,8 @@ At most one open request per customer and per teller.
 - A teller owns shifts (`daily_reports.teller_id`), transactions
   (`transactions.user_id`) and withdrawal requests (`withdrawal_authorizations.teller_id`).
 - A customer approves or rejects only requests with their `customer_id`.
-- A customer is bound to at most one Firebase user (`firebase_uid`) and a Firebase user to
-  at most one customer; customers authenticate through it, never through a `users` row.
+- Customers authenticate with their own NIS/account number + PIN, never through a
+  `users` row. Their push tokens (`customer_push_tokens`) belong to one customer each.
 - A supervisor appears as reviewer (`daily_reports.supervisor_id`), approver
   (`cash_transfers.approved_by`) and correction authorizer
   (`transactions.authorized_by`).

@@ -44,11 +44,8 @@ class CustomerController extends Controller
             ->when($request->input('class'), fn ($query, $class) => $query->where('class', $class))
             ->when($request->input('group'), fn ($query, $group) => $query->where('group', $group))
             ->when($request->input('status'), fn ($query, $status) => $query->where('account_status', $status))
-            ->when($request->input('activation'), fn ($query, $activation) => match ($activation) {
-                'pending' => $query->whereNull('activated_at'),
-                'activated' => $query->whereNotNull('activated_at'),
-                default => $query,
-            })
+            // Who still has the temporary PIN (has never logged in, or was reset).
+            ->when($request->filled('pin_must_change'), fn ($query) => $query->where('pin_must_change', $request->boolean('pin_must_change')))
             ->orderBy('full_name')
             ->paginate($this->perPage($request));
 
@@ -56,15 +53,15 @@ class CustomerController extends Controller
     }
 
     /**
-     * Open the account. It starts "pending": the student activates the app by
-     * signing in with the registered email and entering their NIS, then
-     * creates their own PIN.
+     * Open the account with a generated temporary PIN. The PIN is in this
+     * response only (give it to the student, e.g. printed with the card); the
+     * student must replace it at the first login.
      */
     public function store(StoreCustomerRequest $request): CustomerResource
     {
-        $customer = $this->customers->create($request->validated());
+        [$customer, $temporaryPin] = $this->customers->create($request->validated());
 
-        return new CustomerResource($customer->load('major'));
+        return (new CustomerResource($customer->load('major')))->additional(['temporary_pin' => $temporaryPin]);
     }
 
     public function show(Customer $customer): CustomerResource
@@ -80,16 +77,18 @@ class CustomerController extends Controller
     }
 
     /**
-     * Forgotten PIN: remove it (and any lock) so the customer creates a new
-     * one in the app, after signing in with their Firebase account again.
+     * Forgotten PIN: a new temporary PIN (in this response only), the lock
+     * lifted, and every app session ended. The student replaces it at the
+     * next login.
      */
     public function resetPin(Customer $customer, PinService $pins): JsonResponse
     {
-        $pins->reset($customer);
+        $temporaryPin = $pins->reset($customer);
 
         return response()->json([
-            'message' => 'PIN direset. Nasabah membuat PIN baru di aplikasi Bank Mini.',
+            'message' => 'PIN direset. Berikan PIN sementara kepada nasabah; nasabah wajib menggantinya saat masuk.',
             'data' => new CustomerResource($customer->load('major')),
+            'temporary_pin' => $temporaryPin,
         ]);
     }
 

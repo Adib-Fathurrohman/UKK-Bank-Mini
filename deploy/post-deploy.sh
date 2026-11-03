@@ -19,7 +19,7 @@ mkdir -p storage/app/private storage/app/public \
 credentials=$(grep -E '^FIREBASE_CREDENTIALS=' .env | cut -d= -f2- | tr -d '"' || true)
 if [ -n "$credentials" ]; then
     case "$credentials" in /*) path="$credentials" ;; *) path="$(pwd)/$credentials" ;; esac
-    [ -f "$path" ] || echo "WARNING: Firebase key $path not found; customer login will answer 503 auth_unavailable." >&2
+    [ -f "$path" ] || echo "WARNING: Firebase key $path not found; push notifications (FCM) will not be sent." >&2
 fi
 
 php artisan migrate --force

@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\EnsureCustomer;
+use App\Http\Middleware\EnsurePinChanged;
 use App\Http\Middleware\EnsureStaffRole;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Application;
@@ -21,12 +22,14 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'staff' => EnsureStaffRole::class,
             'customer' => EnsureCustomer::class,
+            'pin.changed' => EnsurePinChanged::class,
         ]);
 
         // Check the actor before route model binding, so a wrong role gets 403
         // instead of learning from 404 vs 200 which records exist.
         $middleware->prependToPriorityList(before: SubstituteBindings::class, prepend: EnsureStaffRole::class);
         $middleware->prependToPriorityList(before: SubstituteBindings::class, prepend: EnsureCustomer::class);
+        $middleware->prependToPriorityList(before: SubstituteBindings::class, prepend: EnsurePinChanged::class);
 
         // There is no login page: API guests get a 401 JSON response instead of a redirect.
         $middleware->redirectGuestsTo(fn (Request $request) => $request->is('api/*') ? null : '/');

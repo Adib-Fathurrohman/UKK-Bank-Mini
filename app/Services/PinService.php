@@ -2,10 +2,9 @@
 
 namespace App\Services;
 
-use App\Exceptions\CustomerAuthException;
 use App\Exceptions\InvalidPinException;
-use App\Exceptions\PinNotSetException;
 use App\Models\Customer;
+use App\Rules\NotWeakPin;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
@@ -16,8 +15,8 @@ use Illuminate\Support\Facades\Hash;
  * the PIN is locked for pin_lock_minutes. The counter is saved in its own
  * database transaction so that it survives the refused request.
  *
- * The customer creates the PIN in the app after activation (setUp); until
- * then every PIN check is refused with PinNotSetException.
+ * The system hands out temporary PINs (new account, administrator reset);
+ * the customer must replace one at the next login (pin_must_change).
  */
 class PinService
 {
@@ -25,10 +24,6 @@ class PinService
     {
         $failure = DB::transaction(function () use ($customer, $pin) {
             $customer = Customer::withTrashed()->whereKey($customer->getKey())->lockForUpdate()->firstOrFail();
-
-            if (! $customer->hasPin()) {
-                return new PinNotSetException;
-            }
 
             if ($customer->pin_locked_until?->isFuture()) {
                 return InvalidPinException::locked($customer->pin_locked_until);
@@ -63,38 +58,49 @@ class PinService
     }
 
     /**
-     * The customer's first PIN (or a new one after an administrator reset).
-     * The caller has checked the Firebase re-authentication.
+     * A random temporary PIN (never a weak one). Shown once to the
+     * administrator; only its hash is stored.
      */
-    public function setUp(Customer $customer, string $pin): void
+    public function temporaryPin(): string
     {
+        do {
+            $pin = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        } while (NotWeakPin::isWeak($pin));
+
+        return $pin;
+    }
+
+    /**
+     * Administrator reset (forgotten PIN): a new temporary PIN, the lock
+     * lifted, and every session of the customer ended so the next login uses
+     * the new PIN. Returns the temporary PIN.
+     */
+    public function reset(Customer $customer): string
+    {
+        $pin = $this->temporaryPin();
+
         DB::transaction(function () use ($customer, $pin) {
-            $customer = Customer::whereKey($customer->getKey())->lockForUpdate()->firstOrFail();
-
-            if ($customer->hasPin()) {
-                throw CustomerAuthException::pinAlreadySet();
-            }
-
-            $customer->update(['pin' => $pin, 'pin_failed_attempts' => 0, 'pin_locked_until' => null]);
+            $customer->update([
+                'pin' => $pin,
+                'pin_must_change' => true,
+                'pin_failed_attempts' => 0,
+                'pin_locked_until' => null,
+            ]);
+            // Push tokens belong to the sessions and are removed with them.
+            $customer->tokens()->delete();
         });
+
+        return $pin;
     }
 
     /**
-     * Administrator reset: the PIN is removed and the customer creates a new
-     * one in the app. Also lifts a lock from wrong attempts.
-     */
-    public function reset(Customer $customer): void
-    {
-        $customer->update(['pin' => null, 'pin_failed_attempts' => 0, 'pin_locked_until' => null]);
-    }
-
-    /**
-     * Set a new PIN after verifying the current one.
+     * Set a new PIN after verifying the current one. This is also how a
+     * temporary PIN is replaced.
      */
     public function change(Customer $customer, string $currentPin, string $newPin): void
     {
         $this->verify($customer, $currentPin);
 
-        $customer->update(['pin' => $newPin]);
+        $customer->update(['pin' => $newPin, 'pin_must_change' => false]);
     }
 }

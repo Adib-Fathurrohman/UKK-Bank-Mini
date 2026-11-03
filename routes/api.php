@@ -5,8 +5,8 @@ use App\Http\Controllers\API\Admin\StaffController;
 use App\Http\Controllers\API\Audit\JournalController;
 use App\Http\Controllers\API\Audit\TransactionController as AuditTransactionController;
 use App\Http\Controllers\API\Customer\AccountController as CustomerAccountController;
-use App\Http\Controllers\API\Customer\ActivationController as CustomerActivationController;
 use App\Http\Controllers\API\Customer\AuthController as CustomerAuthController;
+use App\Http\Controllers\API\Customer\PushTokenController as CustomerPushTokenController;
 use App\Http\Controllers\API\Customer\WithdrawalAuthorizationController as CustomerWithdrawalAuthorizationController;
 use App\Http\Controllers\API\LoginController;
 use App\Http\Controllers\API\MajorController;
@@ -28,22 +28,14 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 | POST /login is the single entry point. The portal-specific endpoints
 | below accept the same credentials and are kept for convenience.
-| Customers sign in with a Firebase ID token (customer/auth/login).
+| Customers sign in with NIS or account number + PIN.
 */
 
 Route::middleware('throttle:login')->group(function () {
     Route::post('login', LoginController::class);
     Route::post('staff/login', [StaffAuthController::class, 'login']);
-    Route::post('customer/auth/login', [CustomerAuthController::class, 'firebaseLogin']);
+    Route::post('customer/login', [CustomerAuthController::class, 'login']);
 });
-
-/*
-|--------------------------------------------------------------------------
-| Customer activation (public: Firebase verified email + NIS are the proof)
-|--------------------------------------------------------------------------
-*/
-
-Route::post('customer/activation', CustomerActivationController::class)->middleware('throttle:customer-activation');
 
 /*
 |--------------------------------------------------------------------------
@@ -147,26 +139,36 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
 */
 
 Route::middleware(['auth:sanctum', 'customer'])->prefix('customer')->group(function () {
+    // Allowed while the customer still has the temporary PIN.
     Route::get('me', [CustomerAuthController::class, 'me']);
     Route::post('logout', [CustomerAuthController::class, 'logout']);
     Route::post('logout-all', [CustomerAuthController::class, 'logoutAll']);
-    Route::post('unlock', [CustomerAuthController::class, 'unlock'])->middleware('throttle:customer-unlock');
-
-    Route::get('balance', [CustomerAccountController::class, 'balance']);
-    Route::get('card', [CustomerAccountController::class, 'card']);
-    Route::post('pin/setup', [CustomerAccountController::class, 'setUpPin'])->middleware('throttle:customer-unlock');
     Route::post('pin', [CustomerAccountController::class, 'changePin']);
-    Route::get('transactions', [CustomerAccountController::class, 'transactions']);
-    Route::get('statement/export', [CustomerAccountController::class, 'statement']);
-    Route::get('transactions/{transaction}', [CustomerAccountController::class, 'transaction'])->whereNumber('transaction');
 
-    // Approve (with PIN) or reject withdrawals a teller started for this account.
-    Route::middleware('throttle:withdrawal-authorization-poll')->group(function () {
-        Route::get('withdrawal-authorizations', [CustomerWithdrawalAuthorizationController::class, 'index']);
-        Route::get('withdrawal-authorizations/{withdrawalAuthorization}', [CustomerWithdrawalAuthorizationController::class, 'show']);
-    });
-    Route::middleware('throttle:withdrawal-authorization-decide')->group(function () {
-        Route::post('withdrawal-authorizations/{withdrawalAuthorization}/approve', [CustomerWithdrawalAuthorizationController::class, 'approve']);
-        Route::post('withdrawal-authorizations/{withdrawalAuthorization}/reject', [CustomerWithdrawalAuthorizationController::class, 'reject']);
+    // Everything else needs the temporary PIN replaced first (428 pin_change_required).
+    Route::middleware('pin.changed')->group(function () {
+        Route::post('unlock', [CustomerAuthController::class, 'unlock'])->middleware('throttle:customer-unlock');
+
+        Route::get('balance', [CustomerAccountController::class, 'balance']);
+        Route::get('card', [CustomerAccountController::class, 'card']);
+        Route::get('transactions', [CustomerAccountController::class, 'transactions']);
+        Route::get('statement/export', [CustomerAccountController::class, 'statement']);
+        Route::get('transactions/{transaction}', [CustomerAccountController::class, 'transaction'])->whereNumber('transaction');
+
+        // The phone's FCM token, for push notifications of withdrawal requests.
+        Route::middleware('throttle:customer-push-token')->group(function () {
+            Route::post('push-tokens', [CustomerPushTokenController::class, 'store']);
+            Route::delete('push-tokens', [CustomerPushTokenController::class, 'destroy']);
+        });
+
+        // Approve (with PIN) or reject withdrawals a teller started for this account.
+        Route::middleware('throttle:withdrawal-authorization-poll')->group(function () {
+            Route::get('withdrawal-authorizations', [CustomerWithdrawalAuthorizationController::class, 'index']);
+            Route::get('withdrawal-authorizations/{withdrawalAuthorization}', [CustomerWithdrawalAuthorizationController::class, 'show']);
+        });
+        Route::middleware('throttle:withdrawal-authorization-decide')->group(function () {
+            Route::post('withdrawal-authorizations/{withdrawalAuthorization}/approve', [CustomerWithdrawalAuthorizationController::class, 'approve']);
+            Route::post('withdrawal-authorizations/{withdrawalAuthorization}/reject', [CustomerWithdrawalAuthorizationController::class, 'reject']);
+        });
     });
 });

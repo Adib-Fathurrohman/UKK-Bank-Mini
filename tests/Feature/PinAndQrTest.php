@@ -92,16 +92,16 @@ test('deposits do not need a PIN', function () {
     $this->postJson('/api/teller/deposits', ['account_number' => 'RPL-2026-001', 'amount' => 5000])->assertCreated();
 });
 
-test('an administrator PIN reset lifts the lock and removes the PIN until the customer creates a new one', function () {
+test('an administrator PIN reset lifts the lock; the temporary PIN cannot authorize a withdrawal', function () {
     foreach (range(1, 3) as $attempt) {
         withdrawWithPin('000000');
     }
     actingAsStaff(UserRoles::ADMIN);
 
-    $this->postJson("/api/admin/customers/{$this->customer->id}/pin-reset")->assertOk();
+    $temporaryPin = $this->postJson("/api/admin/customers/{$this->customer->id}/pin-reset")->assertOk()->json('temporary_pin');
 
     Sanctum::actingAs($this->teller);
-    withdrawWithPin('123456')->assertUnprocessable()->assertJsonPath('code', 'pin_not_set');
+    withdrawWithPin($temporaryPin)->assertUnprocessable()->assertJsonPath('code', 'pin_change_required');
     expect($this->customer->fresh()->pin_locked_until)->toBeNull();
 });
 

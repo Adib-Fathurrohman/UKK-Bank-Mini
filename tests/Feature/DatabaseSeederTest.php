@@ -53,10 +53,10 @@ test('demo accounts can log in and the teller can open today\'s shift', function
     $this->seed();
 
     $token = $this->postJson('/api/login', ['username' => 'teller', 'password' => 'password'])->assertOk()->json('data.token');
-    // Seeded customers are pending: no Firebase account and no PIN until they activate the app.
-    expect(Customer::where('nis', '20260001')->first())
-        ->isActivated()->toBeFalse()
-        ->pin->toBeNull();
+    // Seeded customers log in with the temporary PIN and must change it first.
+    $this->postJson('/api/login', ['identifier' => '20260001', 'pin' => '123456'])
+        ->assertOk()
+        ->assertJsonPath('data.must_change_pin', true);
 
     $this->withToken($token)->postJson('/api/teller/shift/open', ['denominations' => ['50000' => 2]])->assertCreated();
 });

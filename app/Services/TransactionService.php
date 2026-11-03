@@ -10,6 +10,7 @@ use App\Exceptions\AuthorizationNotUsableException;
 use App\Exceptions\CorrectionNotAllowedException;
 use App\Exceptions\IdempotencyConflictException;
 use App\Exceptions\InsufficientBalanceException;
+use App\Exceptions\PinChangeRequiredException;
 use App\Models\Customer;
 use App\Models\Transaction;
 use App\Models\User;
@@ -51,6 +52,11 @@ class TransactionService
     {
         if ($existing = $this->replay($teller, $idempotencyKey, TransactionTypes::WITHDRAWAL, $customer, $amount)) {
             return $existing;
+        }
+
+        // The temporary PIN was shown to staff, so it never authorizes money.
+        if ($customer->pin_must_change) {
+            throw new PinChangeRequiredException;
         }
 
         $this->pins->verify($customer, $pin);

@@ -3,9 +3,10 @@
 REST API for the school mini bank. One login gateway serves four roles:
 Administrator, Supervisor and Teller (staff web app) and Nasabah (customer
 mobile app). Examples are real responses captured from the seeded demo
-database (long lists shortened), except the customer login and activation examples,
-which are illustrative (they need a Firebase project). Customer login, activation,
-Firebase setup and the customer PIN: [CUSTOMER_AUTH.md](CUSTOMER_AUTH.md).
+database (long lists shortened), except the customer login and push examples, which are
+illustrative. Customer login (NIS + PIN), the temporary PIN and push notifications:
+[CUSTOMER_AUTH.md](CUSTOMER_AUTH.md); client guide:
+[FRONTEND_NIS_PIN_FCM.md](FRONTEND_NIS_PIN_FCM.md).
 
 ## Contents
 
@@ -17,7 +18,7 @@ Firebase setup and the customer PIN: [CUSTOMER_AUTH.md](CUSTOMER_AUTH.md).
 - [Endpoint summary](#endpoint-summary)
 - [Endpoints](#endpoints)
   - [Login gateway](#login-gateway)
-  - [Customer login and activation](#customer-login-and-activation)
+  - [Customer login and PIN](#customer-login-and-pin)
   - [Shared staff endpoints](#shared-staff-endpoints)
   - [Staff management](#staff-management)
   - [Settings](#settings)
@@ -78,7 +79,7 @@ BD, MP, DKV, RPL, TKJ, LPS.
 ## Authentication
 
 Laravel Sanctum bearer tokens, issued by the single login gateway `POST /login`
-(staff: username + password; customers: a Firebase ID token). Staff tokens only work on
+(staff: username + password; customers: NIS or account number + PIN). Staff tokens only work on
 staff endpoints, customer tokens only on `/customer/*`.
 
 - Staff tokens expire after **8 hours** (`SANCTUM_EXPIRATION`); customer tokens after
@@ -86,11 +87,11 @@ staff endpoints, customer tokens only on `/customer/*`.
   token returns `401`.
 - Logout revokes only the token used for that request (`/customer/logout-all` revokes
   all of a customer's tokens).
-- Staff login is limited to **5 attempts per minute** per username and IP, and
-  Firebase logins to 30 per minute per IP (`429`).
-- The PIN is not a login credential. The customer creates it in the app after activation;
-  it is checked with one counter for withdrawal approval, terminal withdrawals, the app
-  unlock and PIN change: **3 wrong PINs in a row lock the PIN for 15 minutes** everywhere.
+- Login is limited to **5 attempts per minute** per username/identifier and IP (`429`).
+- The customer PIN is checked with one counter for login, withdrawal approval, terminal
+  withdrawals, the app unlock and PIN change: **3 wrong PINs in a row lock the PIN for 15
+  minutes** everywhere. New accounts get a **temporary PIN** that must be replaced at the
+  first login.
 - Blocking a staff member or closing a customer account revokes their tokens immediately.
 - Every request re-checks the actor and role against the database before running a query.
 
@@ -120,15 +121,15 @@ Some business errors add extra fields (shown below).
 | Status | When | Example body |
 | --- | --- | --- |
 | `401` | Missing, invalid or expired token | `{ "message": "Unauthenticated." }` |
-| `401`, `403`, `409`, `503` | Customer login, activation or PIN setup refusal, with a `code` (see [Customer login and activation](#customer-login-and-activation)) | `{ "message": "NIS tidak cocok dengan email akun ini. ...", "code": "activation_mismatch" }` |
+| `428` | Customer session still has the temporary PIN (see [Customer login and PIN](#customer-login-and-pin)) | `{ "message": "Ganti PIN sementara Anda terlebih dahulu.", "code": "pin_change_required" }` |
 | `403` | Wrong actor or role, or a blocked/closed account | `{ "message": "Peran Anda tidak memiliki akses ke fitur ini." }` |
 | `404` | Record does not exist or belongs to someone else | `{ "message": "Data tidak ditemukan." }` |
 | `405` | Method not allowed on that URL (e.g. writing to the journal) | `{ "message": "The DELETE method is not supported for route ..." }` |
 | `409` | Staff delete refused because of history | `{ "message": "Staf ini memiliki riwayat transaksi, ... Blokir akunnya saja." }` |
 | `422` | Field validation failed | `{ "message": "...", "errors": { "amount": ["The amount field must be at least 1."] } }` |
 | `422` | Business rule refused the request | `{ "message": "Saldo tidak mencukupi. Saldo minimum Rp10.000 harus tetap tersisa; penarikan maksimal Rp990.000." }` |
-| `422` with `code` | `pin_not_set` (the customer has not created a PIN yet) or `customer_app_not_activated` | `{ "message": "Nasabah belum membuat PIN. ...", "code": "pin_not_set" }` |
-| `429` | Too many login, activation, unlock, PIN setup, correction or withdrawal-authorization requests | `{ "message": "Too Many Attempts." }` |
+| `422` with `code` | `pin_change_required`: withdrawal for a customer who still has the temporary PIN | `{ "message": "Nasabah belum mengganti PIN sementara. ...", "code": "pin_change_required" }` |
+| `429` | Too many login, unlock, push-token, correction or withdrawal-authorization requests | `{ "message": "Too Many Attempts." }` |
 | `500` | Unexpected server error; any money operation is fully rolled back | `{ "message": "Server Error" }` |
 
 `403` messages tell the client what failed: `Fitur ini khusus untuk staf bank.`
@@ -164,7 +165,7 @@ Matches the matrix in the UKK soal (section III.1).
 | --- | :-: | :-: | :-: | :-: |
 | User management | C, R, U, D | — | R | — |
 | Accounts (open, edit, close, print card, reset PIN) | C, R, U | R (lookup) | R | — |
-| App activation, sign-in (Firebase) and creating the PIN | — | — | — | own account (NIS + registered email) |
+| App sign-in (NIS + PIN), replacing the temporary PIN, push token | — | — | — | own account |
 | QR scan lookup | Configure (settings) | R (execute) | — | — |
 | Deposit / withdrawal / correction | R (audit log) | C | R (audit log) | — |
 | Withdrawal PIN | — | C (request), U (complete) | — | U (approve/reject own request with PIN in the app) |
@@ -181,8 +182,7 @@ Matches the matrix in the UKK soal (section III.1).
 | Method | Path | Who |
 | --- | --- | --- |
 | `POST` | `/login` | Public (all roles) |
-| `POST` | `/staff/login`, `/customer/auth/login` | Public (aliases of `/login`) |
-| `POST` | `/customer/activation` | Public (NIS + Firebase ID token) |
+| `POST` | `/staff/login`, `/customer/login` | Public (aliases of `/login`) |
 | `GET` | `/staff/me` · `POST` `/staff/logout` | Staff |
 | `GET` | `/majors` · `/settings` | Staff |
 | `GET` | `/staff`, `/staff/{id}` | Admin, Supervisor |
@@ -212,7 +212,8 @@ Matches the matrix in the UKK soal (section III.1).
 | `GET` | `/reports/annual` (PDF) | Admin, Supervisor |
 | `GET` | `/customer/me`, `/customer/balance`, `/customer/card` | Nasabah |
 | `GET` | `/customer/transactions`, `/customer/transactions/{id}`, `/customer/statement/export` (PDF) | Nasabah |
-| `POST` | `/customer/pin/setup` · `/customer/pin` · `/customer/unlock` · `/customer/logout` · `/customer/logout-all` | Nasabah |
+| `POST` | `/customer/pin` · `/customer/unlock` · `/customer/logout` · `/customer/logout-all` | Nasabah |
+| `POST`, `DELETE` | `/customer/push-tokens` | Nasabah |
 | `GET` | `/customer/withdrawal-authorizations`, `/customer/withdrawal-authorizations/{id}` | Nasabah |
 | `POST` | `/customer/withdrawal-authorizations/{id}/approve`, `/reject` | Nasabah |
 
@@ -225,13 +226,13 @@ Matches the matrix in the UKK soal (section III.1).
 #### `POST /login`
 
 The single entry point for all four roles (soal: "satu pintu gerbang login terpusat").
-Send staff credentials or a customer's Firebase ID token. `data.actor` tells the client
-which portal to open. `/staff/login` and `/customer/auth/login` accept the same bodies.
+Send staff credentials or a customer's NIS/account number + PIN. `data.actor` tells the
+client which portal to open. `/staff/login` and `/customer/login` accept the same bodies.
 
 | Field | Rules |
 | --- | --- |
 | `username`, `password` | Staff: required together |
-| `id_token` | Customer: Firebase ID token (see [Customer login and activation](#customer-login-and-activation)) |
+| `identifier`, `pin` | Customer: NIS or account number (max 50) and the 6-digit PIN (see [Customer login and PIN](#customer-login-and-pin)) |
 
 **200 (staff)**
 
@@ -250,49 +251,34 @@ which portal to open. `/staff/login` and `/customer/auth/login` accept the same 
 }
 ```
 
-**200 (customer, `id_token`)**: `actor` is `"customer"`, `data.customer` is a
-[Customer](#customer) and `data.expires_at` is the session end.
+**200 (customer)**: `actor` is `"customer"`, `data.customer` is a [Customer](#customer),
+`data.expires_at` is the session end and `data.must_change_pin` says whether the
+temporary PIN must be replaced first.
 
-**422**: wrong staff credentials (`Username atau password salah.`), blocked staff, or no
-credentials (NIS/account number + PIN are not credentials and get this answer too):
+**422**: wrong staff credentials (`Username atau password salah.`), blocked staff, wrong
+customer credentials (on `identifier`, see below), or no credentials:
 
 ```json
 {
-  "message": "Isi username dan password (staf), atau masuk dengan akun Google/email (nasabah).",
-  "errors": { "username": ["Isi username dan password (staf), atau masuk dengan akun Google/email (nasabah)."] }
+  "message": "Isi username dan password (staf), atau NIS/nomor rekening dan PIN (nasabah).",
+  "errors": { "username": ["Isi username dan password (staf), atau NIS/nomor rekening dan PIN (nasabah)."] }
 }
 ```
 
 ---
 
-### Customer login and activation
+### Customer login and PIN
 
-Customers sign in with **Firebase Authentication** (Google or email/password) and exchange
-the Firebase ID token for a Sanctum token. The first time, they activate the account with
-their NIS, then create their PIN. The backend sends no email. Design, error handling and
-setup: [CUSTOMER_AUTH.md](CUSTOMER_AUTH.md); client flow:
-[FRONTEND_HANDOFF.md §15.10](FRONTEND_HANDOFF.md#1510-customer-activation-pin-login-unlock-and-password-firebase).
-The examples in this section are illustrative.
+Customers sign in with their **NIS or account number + PIN**; no email or Firebase
+account is needed. A new account (and an admin PIN reset) gets a **temporary PIN** from the
+system, which the customer must replace at the first login. Design:
+[CUSTOMER_AUTH.md](CUSTOMER_AUTH.md); client flow:
+[FRONTEND_NIS_PIN_FCM.md](FRONTEND_NIS_PIN_FCM.md).
 
-Refusals have the shape `{ "message": "...", "code": "..." }`:
+#### `POST /customer/login`
 
-| `code` | Status | Endpoints |
-| --- | --- | --- |
-| `firebase_token_invalid` | 401 | auth/login, activation, pin/setup |
-| `provider_not_allowed` | 403 | auth/login, activation, pin/setup |
-| `account_not_linked` | 403 | auth/login (first sign-in: activate) |
-| `email_not_verified` | 403 | auth/login, activation |
-| `account_inactive` | 403 | auth/login, activation |
-| `activation_mismatch` | 403 | activation |
-| `already_activated` | 409 | activation |
-| `identity_already_linked` | 409 | activation |
-| `identity_mismatch` | 403 | pin/setup |
-| `pin_already_set` | 409 | pin/setup |
-| `auth_unavailable` | 503 | auth/login, activation, pin/setup |
-
-#### `POST /customer/auth/login`
-
-**Public.** `{ "id_token": "<Firebase ID token>" }` (max 4096 characters).
+**Public.** `{ "identifier": "20260001", "pin": "483920" }` (identifier: NIS or account
+number, max 50; PIN exactly 6 digits).
 
 **200**
 
@@ -302,66 +288,61 @@ Refusals have the shape `{ "message": "...", "code": "..." }`:
     "actor": "customer",
     "token": "12|5pJf0b2hQx...",
     "token_type": "Bearer",
-    "expires_at": "2026-12-02T02:00:00.000000Z",
+    "expires_at": "2026-12-03T02:00:00.000000Z",
+    "must_change_pin": true,
     "customer": {
       "id": 1, "account_number": "RPL-2026-001", "nis": "20260001", "full_name": "Budi Santoso",
-      "email": "budi.santoso@example.test", "activation_status": "activated", "activated_at": "2026-11-02T02:00:00.000000Z",
-      "pin_set": true, "class": "X", "group": "1",
+      "email": null, "pin_must_change": true, "class": "X", "group": "1",
       "major": { "id": 1, "code": "RPL", "major_name": "Rekayasa Perangkat Lunak" },
       "account_status": "active", "balance": 500000,
-      "created_at": "2026-10-27T13:10:35.000000Z", "updated_at": "2026-11-02T02:00:00.000000Z", "deleted_at": null
+      "created_at": "2026-10-27T13:10:35.000000Z", "updated_at": "2026-11-03T02:00:00.000000Z", "deleted_at": null
     }
   }
 }
 ```
 
-The customer is the one bound to the token's Firebase UID at activation; emails and ids in
-the body are never used to pick the account. Errors: `401 firebase_token_invalid`,
-`403 provider_not_allowed | account_not_linked | email_not_verified | account_inactive`,
-`503 auth_unavailable`, `422`, `429`. Suspended accounts may log in. `pin_set: false` →
-the app shows PIN creation.
+**422** on `identifier`: `NIS/nomor rekening atau PIN salah.` (unknown identifier, wrong
+PIN or closed account; remaining attempts not revealed), `Terlalu banyak percobaan PIN
+salah. Coba lagi pukul HH:MM.` (locked), `Rekening ini sudah tidak aktif.`. Wrong PINs
+count toward the shared lock. Suspended accounts may log in. 5 attempts per minute per
+identifier + IP.
 
-#### `POST /customer/activation`
+#### The temporary PIN
 
-**Public.** `{ "nis": "20260001", "id_token": "<Firebase ID token>" }`. Binds the Firebase
-account to the customer with this NIS when the token's **verified** email equals the
-registered email (case-insensitive), and returns **200** with the same body as
-`/customer/auth/login` (`pin_set: false`). With the same Firebase account again it just
-signs in.
+While `pin_must_change` is true the session may only call `GET /customer/me`,
+`POST /customer/pin`, `/customer/logout` and `/customer/logout-all`. Every other customer
+endpoint answers:
 
-| Status | `code` | Cause |
-| --- | --- | --- |
-| 403 | `email_not_verified` | Email/password account not verified yet (Firebase sends the verification email) |
-| 403 | `activation_mismatch` | `NIS tidak cocok dengan email akun ini. Masuk dengan email yang didaftarkan di bank mini, atau hubungi petugas.` One answer for an unknown NIS, another email or no registered email |
-| 403 | `account_inactive` | Account closed |
-| 409 | `already_activated` | Activated with a different Firebase account |
-| 409 | `identity_already_linked` | This Firebase account is bound to another customer |
-| 401 / 403 / 503 | `firebase_token_invalid` / `provider_not_allowed` / `auth_unavailable` | As for login |
+```json
+HTTP 428
+{ "message": "Ganti PIN sementara Anda terlebih dahulu.", "code": "pin_change_required" }
+```
 
-20 requests per minute per IP.
+`POST /customer/pin` with the temporary PIN as `current_pin` replaces it (see
+[below](#post-customerpin)); the same session then has full access.
 
-#### `POST /customer/pin/setup`
+#### `POST /customer/push-tokens` · `DELETE /customer/push-tokens`
 
-**Nasabah.** Create the PIN after activation, or after an administrator reset.
+**Nasabah** (PIN already changed). The phone's Firebase Cloud Messaging token, so the
+backend can push new withdrawal requests.
 
 | Field | Rules |
 | --- | --- |
-| `id_token` | required: a fresh Firebase ID token of the account bound to this customer |
-| `pin` | required, exactly 6 digits, confirmed |
-| `pin_confirmation` | must equal `pin` |
+| `token` | required, string, max 255 (FCM registration token) |
+| `platform` | `android` or `ios` (required for `POST`) |
 
-**201** `{ "message": "PIN berhasil dibuat." }`. `403 identity_mismatch` (another Firebase
-account), `401 firebase_token_invalid`, `409 pin_already_set` (use `POST /customer/pin`),
-`422` validation. 5 per minute.
+`POST` → **201** (new) or **200** (already known) `{ "message": "Notifikasi aktif di perangkat ini." }`.
+The token belongs to the current session: logout, logout-all, an admin PIN reset,
+deactivation and session expiry remove it. A token already registered by another customer
+(shared phone) moves to the caller. `DELETE` with `{token}` → **200**
+`{ "message": "Notifikasi dimatikan di perangkat ini." }` (only the caller's own tokens).
+10 per minute.
 
-Until a PIN exists, everything that needs it answers **422**:
-
-```json
-{ "message": "Nasabah belum membuat PIN. PIN dibuat oleh nasabah di aplikasi Bank Mini setelah akun diaktifkan.", "code": "pin_not_set" }
-```
-
-(`/customer/unlock`, `/customer/pin`, approving a withdrawal, `/teller/withdrawals`,
-`/teller/withdrawal-authorizations`). No wrong attempt is counted.
+When a teller creates a withdrawal request, each registered phone gets a push:
+notification title `Permintaan penarikan`, body `Teller {name} meminta persetujuan
+penarikan Rp50.000. Buka aplikasi untuk menyetujui atau menolak.`, data
+`{ "type": "withdrawal_authorization", "id": "<request id>" }`. It is sent after the
+teller's response; a failure only logs a warning. The app keeps polling.
 
 ---
 
@@ -513,26 +494,26 @@ Closed accounts are hidden from the list by default but can always be opened by 
 | --- | --- |
 | `search` | Name, NIS or account number |
 | `major_id`, `class`, `group`, `status` | Filters |
-| `activation` | `pending` or `activated` |
+| `pin_must_change` | `1` (still the temporary PIN) or `0` |
 | `trashed` | `with` includes closed accounts, `only` shows only them |
 
 #### `POST /admin/customers`
 
 **Admin.** Open an account. The account number is generated; the account starts `active`
-with balance `0` (money only enters through a teller), `activation_status: pending` and no
-PIN (`pin_set: false`). `account_number`, `account_status` and `balance` in the body are
-ignored. No email is sent: the student installs the app, signs in with the registered
-email, enters the NIS and creates a PIN.
+with balance `0` (money only enters through a teller) and a **temporary PIN** generated by
+the system (`pin_must_change: true`), returned once as `temporary_pin`. Give it to the
+student, who must replace it at the first login. `account_number`, `account_status` and
+`balance` in the body are ignored.
 
 | Field | Rules |
 | --- | --- |
 | `nis` | required, max 20, unique (including closed accounts) |
 | `full_name` | required, max 255 |
-| `email` | required, valid email, max 255, unique (case-insensitive; stored lowercase) |
+| `email` | optional, valid email, max 255, unique (case-insensitive; stored lowercase) |
 | `class` | required, `X`/`XI`/`XII` |
 | `major_id` | required, existing major |
 | `group` | required, `1`–`4` |
-| `pin` | **prohibited**: `422 errors.pin = "PIN dibuat oleh nasabah di aplikasi Bank Mini setelah aktivasi."` |
+| `pin` | **prohibited**: `422 errors.pin = "PIN sementara dibuat otomatis oleh sistem."` |
 
 **201**
 
@@ -540,37 +521,37 @@ email, enters the NIS and creates a PIN.
 {
   "data": {
     "id": 4, "account_number": "AK-2026-001", "nis": "20260004", "full_name": "Dewi Anggraini",
-    "email": "dewi.anggraini@example.test", "activation_status": "pending", "activated_at": null,
-    "pin_set": false, "class": "X", "group": "2",
+    "email": "dewi.anggraini@example.test", "pin_must_change": true, "class": "X", "group": "2",
     "major": { "id": 4, "code": "AK", "major_name": "Akuntansi dan Keuangan Lembaga" },
     "account_status": "active", "balance": 0,
     "created_at": "2026-10-27T13:10:36.000000Z", "updated_at": "2026-10-27T13:10:36.000000Z", "deleted_at": null
-  }
+  },
+  "temporary_pin": "483920"
 }
 ```
 
-(Captured before the email fields existed; the `email`, `activation_status`,
-`activated_at` and `pin_set` values are illustrative.)
+(Captured before the email fields existed; the `email`, `pin_must_change` and
+`temporary_pin` values are illustrative.) `temporary_pin` appears only in this response:
+show it once, never store it in the client.
 
 #### `PUT|PATCH /admin/customers/{id}`
 
 **Admin.** Any subset of `nis`, `full_name`, `email`, `class`, `major_id`, `group` and
 `account_status` (`active` or `suspended` only). Account number and balance cannot be
-changed. `email` can only change while the account is pending; after activation:
-`422 errors.email = "Email tidak dapat diubah setelah rekening diaktifkan."`. `pin` is
-refused: `422 errors.pin = "PIN dibuat oleh nasabah di aplikasi Bank Mini. Gunakan reset PIN jika nasabah lupa PIN."`
+changed. `email` is optional and may be changed or cleared at any time. `pin` is refused:
+`422 errors.pin = "PIN tidak dapat diubah di sini. Gunakan reset PIN untuk membuat PIN sementara baru."`
 
 #### `POST /admin/customers/{id}/deactivate`
 
-**Admin.** Graduation: status `inactive`, tokens revoked, the Firebase user disabled (best effort; logged if Firebase is unreachable), soft deleted.
-History stays.
+**Admin.** Graduation: status `inactive`, tokens (and with them the push tokens) revoked,
+soft deleted. History stays.
 
 #### `POST /admin/customers/{id}/pin-reset`
 
-**Admin.** Forgotten PIN: removes the PIN and lifts a PIN lock; the customer creates a new
-one in the app (`POST /customer/pin/setup`). **200**
-`{ "message": "PIN direset. Nasabah membuat PIN baru di aplikasi Bank Mini.", "data": Customer }`
-(`pin_set: false`).
+**Admin.** Forgotten PIN: a new temporary PIN, the PIN lock lifted, and every app session
+of the customer ended (with its push tokens). **200**
+`{ "message": "PIN direset. Berikan PIN sementara kepada nasabah; nasabah wajib menggantinya saat masuk.", "data": Customer, "temporary_pin": "..." }`
+(`pin_must_change: true`). Show `temporary_pin` once.
 
 #### `GET /admin/customers/{id}/card`
 
@@ -700,8 +681,7 @@ Closed accounts are not found (**404** `Nasabah tidak ditemukan.`).
     "class": "X", "group": "1", "major_name": "Rekayasa Perangkat Lunak",
     "account_status": "active", "balance": 500000,
     "pin_locked_until": null,
-    "activation_status": "activated",
-    "pin_set": true
+    "pin_must_change": false
   }
 }
 ```
@@ -709,12 +689,10 @@ Closed accounts are not found (**404** `Nasabah tidak ditemukan.`).
 `pin_locked_until` is set while the PIN is locked after wrong PINs (no withdrawal
 request can be created for the customer until then).
 
-`activation_status` is `activated` once the customer has activated the customer app
-(Firebase account linked, see [CUSTOMER_AUTH.md](CUSTOMER_AUTH.md)), otherwise `pending`.
-`pin_set` says whether the customer has created a PIN (in the app, after activation, and
-again after an admin reset). A withdrawal of any kind needs both: for a `pending` customer
-`POST /teller/withdrawal-authorizations` answers `422 customer_app_not_activated`, and
-without a PIN every withdrawal answers `422 pin_not_set`.
+`pin_must_change` is `true` while the customer still has the temporary PIN from the system
+(new account, or after an admin reset). That PIN was seen by staff, so no withdrawal is
+possible until the customer replaces it in the app: both withdrawal endpoints answer
+`422 pin_change_required`.
 
 #### Idempotency
 
@@ -796,8 +774,8 @@ After **3 wrong PINs in a row** the PIN is locked for **15 minutes**
 until then. The counter is shared with the app unlock, mobile approval and PIN change.
 A correct PIN resets the counter; an admin PIN reset removes the PIN and the lock.
 
-A customer without a PIN (not activated yet, or after an admin reset) gets
-`422 {"message": "Nasabah belum membuat PIN. ...", "code": "pin_not_set"}`.
+A customer who still has the temporary PIN gets, without a PIN attempt being counted:
+`422 {"message": "Nasabah belum mengganti PIN sementara. Minta nasabah masuk ke aplikasi Bank Mini dan mengganti PIN terlebih dahulu.", "code": "pin_change_required"}`.
 
 ```json
 {
@@ -940,18 +918,19 @@ balance error and the PIN lock error of `POST /teller/withdrawals`:
 | `Nasabah ini masih memiliki permintaan penarikan yang belum selesai.` | The customer already has an open request (from any teller) |
 | `Persetujuan penarikan melalui aplikasi nasabah sedang tidak diaktifkan.` | Setting is `terminal` |
 
-**422 with a `code`** (nobody could approve the request, so none is created):
+**422 `pin_change_required`** when the customer still has the temporary PIN (the app can
+do nothing but change it, so nobody could approve the request; none is created):
 
 ```json
 {
-  "message": "Nasabah belum mengaktifkan aplikasi Bank Mini, sehingga belum dapat melakukan penarikan. Minta nasabah mengaktifkan akun di aplikasi dan membuat PIN terlebih dahulu.",
-  "code": "customer_app_not_activated"
+  "message": "Nasabah belum mengganti PIN sementara. Minta nasabah masuk ke aplikasi Bank Mini dan mengganti PIN terlebih dahulu.",
+  "code": "pin_change_required"
 }
 ```
 
-for `activation_status: pending` (in every mode; such a customer has no PIN, so the
-terminal cannot be used either), and `422 pin_not_set` for an activated customer without a
-PIN. An inactive account is reported first, with the usual account-status error.
+An inactive account is reported first, with the usual account-status error. A created
+request is pushed to the customer's phones (FCM, see
+[push tokens](#post-customerpush-tokens--delete-customerpush-tokens)); the app also polls.
 
 #### `GET /teller/withdrawal-authorizations` · `GET /teller/withdrawal-authorizations/{id}`
 
@@ -1035,8 +1014,7 @@ The PIN is never stored or echoed.
 { "message": "PIN salah. Sisa percobaan: 2.", "remaining_attempts": 2, "pin_locked_until": null }
 ```
 
-PIN locked (`remaining_attempts: 0`, `pin_locked_until` set), no PIN (`pin_not_set`),
-request no longer pending (`status` included), or account suspended. Staff tokens get **403**.
+PIN locked (`remaining_attempts: 0`, `pin_locked_until` set), request no longer pending (`status` included), or account suspended. Staff tokens get **403**.
 
 #### `POST /customer/withdrawal-authorizations/{id}/reject`
 
@@ -1247,9 +1225,9 @@ parameters are ignored.
 | `GET /customer/transactions` | Statement, newest first, default `per_page` 20. Filters `from`, `to`, `type` |
 | `GET /customer/transactions/{id}` | One own line (**404** for others) |
 | `GET /customer/statement/export` | Own statement as PDF |
-| `POST /customer/pin/setup` | Create the PIN, see [above](#post-customerpinsetup) |
+| `POST`, `DELETE /customer/push-tokens` | Register / remove the phone's FCM token, see [above](#post-customerpush-tokens--delete-customerpush-tokens) |
 | `POST /customer/pin` | Change PIN |
-| `POST /customer/unlock` | `{pin}` → `200 {"message":"PIN benar."}`: unlock the app during a session. Wrong PIN `422` with `remaining_attempts`; `422 pin_not_set` before a PIN exists; shared lock; 5 per minute |
+| `POST /customer/unlock` | `{pin}` → `200 {"message":"PIN benar."}`: unlock the app during a session. Wrong PIN `422` with `remaining_attempts`; shared lock; 5 per minute |
 | `POST /customer/logout` | Revoke the current token |
 | `POST /customer/logout-all` | Revoke all tokens of the customer |
 | `GET /customer/withdrawal-authorizations` (and `/{id}`, `/{id}/approve`, `/{id}/reject`) | Approve or reject a withdrawal the teller started, see [withdrawal authorizations](#withdrawal-authorizations-mobile-approval) |
@@ -1274,8 +1252,11 @@ Statement lines ([StatementLine](#statementline)) leave out tellers and journals
 | `new_pin_confirmation` | must equal `new_pin` |
 
 **200** `{ "message": "PIN berhasil diubah." }`. A wrong `current_pin` counts toward the
-same lock as the app unlock and withdrawals (**422** with `remaining_attempts`). Without a
-PIN yet: `422 pin_not_set` (use `POST /customer/pin/setup`).
+same lock as login, the app unlock and withdrawals (**422** with `remaining_attempts`).
+`new_pin` must not be weak (`PIN terlalu mudah ditebak. Hindari angka yang sama semua atau
+berurutan.`: one repeated digit or a straight run such as 123456). This is also how the
+temporary PIN is replaced; `pin_must_change` becomes `false`. Allowed with the temporary
+PIN.
 
 ---
 
@@ -1293,10 +1274,8 @@ Passwords, PINs and idempotency keys never appear in responses.
 | Field | Notes |
 | --- | --- |
 | `id`, `nis`, `full_name`, `class`, `group` | |
-| `email` | Registered email (nullable for accounts created before emails were required) |
-| `activation_status` | `pending` until the customer activates the app, then `activated` |
-| `activated_at` | When the app was activated, or null |
-| `pin_set` | Whether the customer has created a PIN (only possible after activation) |
+| `email` | Optional contact email, or null |
+| `pin_must_change` | `true` while the customer still has the temporary PIN from the system |
 | `account_number` | e.g. `RPL-2026-001`, generated |
 | `major` | `{ id, code, major_name }` |
 | `account_status` | `active`, `suspended`, `inactive` |
@@ -1389,10 +1368,10 @@ the transaction amount; exactly one debit and one credit per transaction),
 
 ### Customer (mobile app)
 
-First time: sign in with Google or email/password (Firebase verifies the email) →
-`POST /customer/auth/login` answers `account_not_linked` → enter the NIS →
-`POST /customer/activation` → create the PIN with `POST /customer/pin/setup`.
-Later: Firebase sign-in → `POST /customer/auth/login`; while the session lasts, unlock with
+First time: `POST /customer/login` with the NIS and the temporary PIN from the admin →
+`must_change_pin: true` → `POST /customer/pin` (temporary → own PIN) →
+`POST /customer/push-tokens`. Later: `POST /customer/login`; while the session lasts,
+unlock with
 `POST /customer/unlock` → `GET /customer/balance`,
 `GET /customer/transactions`, `GET /customer/card` (show the QR at the counter),
 `POST /customer/pin`, `POST /customer/logout`. At the counter, when the teller starts a

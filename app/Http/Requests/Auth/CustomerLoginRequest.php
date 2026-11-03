@@ -4,10 +4,7 @@ namespace App\Http\Requests\Auth;
 
 use Illuminate\Foundation\Http\FormRequest;
 
-/**
- * A Firebase ID token from the customer app (Google or email/password sign-in).
- */
-class FirebaseLoginRequest extends FormRequest
+class CustomerLoginRequest extends FormRequest
 {
     /**
      * Get the validation rules that apply to the request.
@@ -17,7 +14,9 @@ class FirebaseLoginRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'id_token' => ['required', 'string', 'max:4096'],
+            // Either the student's NIS or their account number.
+            'identifier' => ['required', 'string', 'max:50'],
+            'pin' => ['required', 'string', 'digits:6'],
         ];
     }
 }

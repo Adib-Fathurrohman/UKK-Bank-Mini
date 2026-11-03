@@ -5,7 +5,6 @@ use App\Models\Customer;
 use App\Models\User;
 use App\Services\CustomerAuthService;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Log;
 
 /*
 | Customer sessions: long-lived tokens (CUSTOMER_SESSION_MINUTES), the PIN as
@@ -14,8 +13,7 @@ use Illuminate\Support\Facades\Log;
 
 beforeEach(function () {
     $this->travelTo(Carbon::parse('2026-11-02 09:00:00'));
-    $this->firebase = fakeFirebase();
-    $this->customer = Customer::factory()->activated('uid-budi')->create(['email' => 'budi@example.test', 'pin' => '123456']);
+    $this->customer = Customer::factory()->create(['nis' => '20260001', 'pin' => '123456']);
 });
 
 function customerSessionToken(Customer $customer): string
@@ -124,51 +122,20 @@ test('logout ends only the current session; logout-all ends every session', func
     expect($this->customer->tokens()->count())->toBe(0);
 });
 
-test('deactivation ends all sessions, disables the Firebase user and blocks new logins', function () {
+test('deactivation ends all sessions and blocks new logins', function () {
     $token = customerSessionToken($this->customer);
-    $idToken = $this->firebase->issue('uid-budi', 'budi@example.test');
     actingAsStaff(UserRoles::ADMIN);
 
     $this->postJson("/api/admin/customers/{$this->customer->id}/deactivate")->assertOk();
 
-    expect($this->customer->tokens()->count())->toBe(0)
-        ->and($this->firebase->disabledUids)->toBe(['uid-budi']);
-
+    expect($this->customer->tokens()->count())->toBe(0);
     getAsToken($token, '/api/customer/me')->assertUnauthorized();
 
-    // Even if Firebase still accepted the account, the backend refuses it.
-    $this->firebase->disabledUids = [];
-    $this->postJson('/api/customer/auth/login', ['id_token' => $idToken])
-        ->assertForbidden()
-        ->assertJsonPath('code', 'account_inactive');
+    $this->app['auth']->forgetGuards();
+    $this->postJson('/api/customer/login', ['identifier' => '20260001', 'pin' => '123456'])->assertUnprocessable();
 
     // Banking history is kept.
     expect(Customer::withTrashed()->find($this->customer->id))->not->toBeNull();
-});
-
-test('deactivation still succeeds when Firebase is unreachable', function () {
-    Log::spy();
-    $this->firebase->unavailable = true;
-    $token = customerSessionToken($this->customer);
-    actingAsStaff(UserRoles::ADMIN);
-
-    $this->postJson("/api/admin/customers/{$this->customer->id}/deactivate")
-        ->assertOk()
-        ->assertJsonPath('data.account_status', 'inactive');
-
-    expect($this->customer->tokens()->count())->toBe(0);
-    Log::shouldHaveReceived('warning')->withArgs(fn ($message) => str_contains($message, 'Firebase user'))->once();
-    getAsToken($token, '/api/customer/me')->assertUnauthorized();
-});
-
-test('deactivating a pending customer does not call Firebase', function () {
-    $pending = Customer::factory()->create();
-    $this->firebase->unavailable = true;
-    actingAsStaff(UserRoles::ADMIN);
-
-    $this->postJson("/api/admin/customers/{$pending->id}/deactivate")->assertOk();
-
-    expect($this->firebase->disabledUids)->toBe([]);
 });
 
 test('withdrawal approval in the app keeps requiring the PIN within a session', function () {

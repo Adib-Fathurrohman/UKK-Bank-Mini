@@ -29,12 +29,13 @@ test('admin can open an account linked to a major', function () {
         ->assertJsonPath('data.major.id', $payload['major_id'])
         ->assertJsonPath('data.account_status', 'active')
         ->assertJsonPath('data.balance', 0)
-        ->assertJsonPath('data.pin_set', false)
+        ->assertJsonPath('data.pin_must_change', true)
+        ->assertJsonPath('temporary_pin', fn ($pin) => preg_match('/^\d{6}$/', $pin) === 1)
         ->assertJsonMissingPath('data.pin');
 
     $customer = Customer::firstWhere('nis', '20269999');
     expect($customer->account_number)->toMatch('/^[A-Z]+-\d{4}-\d{3}$/')
-        ->and($customer->pin)->toBeNull();
+        ->and(Hash::check($response->json('temporary_pin'), $customer->pin))->toBeTrue();
 });
 
 test('account numbers combine major code, school year and a serial per major and year', function () {
@@ -107,7 +108,6 @@ test('account creation is validated', function (array $overrides, string $field)
     'any PIN (the customer creates it)' => [['pin' => '246810'], 'pin'],
     'unknown major' => [['major_id' => 999], 'major_id'],
     'invalid class' => [['class' => 'XIII'], 'class'],
-    'missing email' => [['email' => null], 'email'],
     'invalid email' => [['email' => 'bukan-email'], 'email'],
     'duplicate email (any case)' => [['email' => 'SAMA@example.test'], 'email'],
 ]);
@@ -126,7 +126,7 @@ test('admin can update account details and status, but not the PIN', function ()
 
     $this->patchJson("/api/admin/customers/{$customer->id}", ['pin' => '111222'])
         ->assertUnprocessable()
-        ->assertJsonValidationErrors(['pin' => 'PIN dibuat oleh nasabah di aplikasi Bank Mini. Gunakan reset PIN jika nasabah lupa PIN.']);
+        ->assertJsonValidationErrors(['pin' => 'PIN tidak dapat diubah di sini. Gunakan reset PIN untuk membuat PIN sementara baru.']);
 
     $customer->refresh();
     expect(Hash::check('123456', $customer->pin))->toBeTrue()

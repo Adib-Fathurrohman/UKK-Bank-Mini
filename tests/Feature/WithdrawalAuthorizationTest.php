@@ -23,7 +23,7 @@ use Laravel\Sanctum\Sanctum;
 
 beforeEach(function () {
     $this->travelTo(Carbon::parse('2026-10-23 09:00:00'));
-    $this->customer = Customer::factory()->activated()->create([
+    $this->customer = Customer::factory()->create([
         'account_number' => 'RPL-2026-001',
         'nis' => '20260001',
         'pin' => '123456',
@@ -395,7 +395,7 @@ test('a customer can have only one open request', function () {
 
 test('a teller can have only one open request', function () {
     pendingWithdrawal();
-    Customer::factory()->activated()->create(['account_number' => 'RPL-2026-002', 'balance' => 100000]);
+    Customer::factory()->create(['account_number' => 'RPL-2026-002', 'balance' => 100000]);
 
     requestWithdrawal(20000, 'RPL-2026-002')->assertUnprocessable();
 
@@ -531,7 +531,7 @@ test('the balance is checked again when completing', function () {
 });
 
 test('requests are refused for accounts that are not active', function () {
-    Customer::factory()->suspended()->activated()->create(['account_number' => 'RPL-2026-009', 'balance' => 100000]);
+    Customer::factory()->suspended()->create(['account_number' => 'RPL-2026-009', 'balance' => 100000]);
 
     requestWithdrawal(20000, 'RPL-2026-009')->assertUnprocessable();
     expect(WithdrawalAuthorization::count())->toBe(0);
@@ -609,46 +609,88 @@ test('in both mode either way works', function () {
 
 /*
 |--------------------------------------------------------------------------
-| Customers who have not activated the app
+| Customers who still have the temporary PIN
 |--------------------------------------------------------------------------
 */
 
-test('the teller lookup shows whether the customer has activated the app and created a PIN', function () {
-    Customer::factory()->pending()->create(['account_number' => 'RPL-2026-002']);
+test('the teller lookup shows whether the customer still has the temporary PIN', function () {
+    Customer::factory()->mustChangePin()->create(['account_number' => 'RPL-2026-002']);
 
-    $this->getJson('/api/teller/customers/lookup?identifier=RPL-2026-001')->assertOk()
-        ->assertJsonPath('data.activation_status', 'activated')
-        ->assertJsonPath('data.pin_set', true);
-    $this->getJson('/api/teller/customers/lookup?identifier=RPL-2026-002')->assertOk()
-        ->assertJsonPath('data.activation_status', 'pending')
-        ->assertJsonPath('data.pin_set', false);
+    $this->getJson('/api/teller/customers/lookup?identifier=RPL-2026-001')->assertOk()->assertJsonPath('data.pin_must_change', false);
+    $this->getJson('/api/teller/customers/lookup?identifier=RPL-2026-002')->assertOk()->assertJsonPath('data.pin_must_change', true);
 });
 
-test('a request for a customer without the app is refused up front', function (string $mode) {
+test('no withdrawal is possible while the customer has the temporary PIN, in any mode', function (string $mode) {
     allowTerminalWithdrawals($mode);
-    $pending = Customer::factory()->pending()->create(['account_number' => 'RPL-2026-002', 'balance' => 100000]);
+    $customer = Customer::factory()->mustChangePin()->create(['account_number' => 'RPL-2026-002', 'balance' => 100000]);
 
-    requestWithdrawal(20000, 'RPL-2026-002')
+    $expected = [
+        'message' => 'Nasabah belum mengganti PIN sementara. Minta nasabah masuk ke aplikasi Bank Mini dan mengganti PIN terlebih dahulu.',
+        'code' => 'pin_change_required',
+    ];
+
+    requestWithdrawal(20000, 'RPL-2026-002')->assertUnprocessable()->assertExactJson($expected);
+
+    // The temporary PIN (known to staff) does not work at the terminal either, and is not counted.
+    allowTerminalWithdrawals('both');
+    $this->postJson('/api/teller/withdrawals', ['account_number' => 'RPL-2026-002', 'amount' => 20000, 'pin' => '123456'])
         ->assertUnprocessable()
-        ->assertExactJson([
-            'message' => 'Nasabah belum mengaktifkan aplikasi Bank Mini, sehingga belum dapat melakukan penarikan. Minta nasabah mengaktifkan akun di aplikasi dan membuat PIN terlebih dahulu.',
-            'code' => 'customer_app_not_activated',
-        ]);
+        ->assertExactJson($expected);
 
     expect(WithdrawalAuthorization::count())->toBe(0)
-        ->and($pending->fresh()->balance)->toBe(100000);
+        ->and(Transaction::count())->toBe(0)
+        ->and($customer->fresh()->balance)->toBe(100000)
+        ->and($customer->fresh()->pin_failed_attempts)->toBe(0);
 
     // The teller is not left with an open request and can serve the next customer.
     pendingWithdrawal();
 })->with(['mobile', 'both']);
 
-test('an inactive account is reported before the missing activation', function () {
-    Customer::factory()->suspended()->pending()->create(['account_number' => 'RPL-2026-002', 'balance' => 100000]);
+test('an inactive account is reported before the temporary PIN', function () {
+    Customer::factory()->suspended()->mustChangePin()->create(['account_number' => 'RPL-2026-002', 'balance' => 100000]);
 
     requestWithdrawal(20000, 'RPL-2026-002')
         ->assertUnprocessable()
         ->assertJsonMissingPath('code');
 });
+
+/*
+|--------------------------------------------------------------------------
+| Push notification (FCM)
+|--------------------------------------------------------------------------
+*/
+
+test('a new request is pushed to the customer once the teller has the answer', function () {
+    $push = fakePush();
+    $this->teller->update(['full_name' => 'Teller Loket 1']);
+
+    $id = requestWithdrawal(50000)->assertCreated()->json('data.id');
+
+    expect($push->sent)->toHaveCount(1)
+        ->and($push->sent[0])->toBe([
+            'customer_id' => $this->customer->id,
+            'title' => 'Permintaan penarikan',
+            'body' => 'Teller Teller Loket 1 meminta persetujuan penarikan Rp50.000. Buka aplikasi untuk menyetujui atau menolak.',
+            'data' => ['type' => 'withdrawal_authorization', 'id' => $id],
+        ]);
+});
+
+test('a refused request sends no push', function () {
+    $push = fakePush();
+
+    requestWithdrawal(999999999)->assertUnprocessable();
+
+    expect($push->sent)->toBe([]);
+});
+
+test('a failing push never fails the teller\'s request', function () {
+    $push = fakePush();
+    $push->failing = true;
+
+    requestWithdrawal()->assertCreated();
+
+    expect(WithdrawalAuthorization::count())->toBe(1);
+})->throwsNoExceptions();
 
 /*
 |--------------------------------------------------------------------------

@@ -13,8 +13,9 @@ class Customer extends Authenticatable
     use HasApiTokens, HasFactory, SoftDeletes;
 
     /**
-     * The 6-digit PIN, created by the customer in the app after activation
-     * (null until then, and after an administrator resets it).
+     * Customers sign in with their NIS (or account number) and a 6-digit PIN.
+     * The system generates a temporary PIN; the customer must replace it at
+     * the first login (pin_must_change).
      */
     protected $authPasswordName = 'pin';
 
@@ -28,14 +29,12 @@ class Customer extends Authenticatable
         'nis',
         'full_name',
         'email',
-        'firebase_uid',
-        'email_verified_at',
-        'activated_at',
         'class',
         'major_id',
         'group',
         'account_status',
         'pin',
+        'pin_must_change',
         'pin_failed_attempts',
         'pin_locked_until',
         'balance',
@@ -43,7 +42,6 @@ class Customer extends Authenticatable
 
     protected $hidden = [
         'pin',
-        'firebase_uid',
     ];
 
     protected function casts(): array
@@ -51,27 +49,11 @@ class Customer extends Authenticatable
         return [
             'account_status' => AccountStatus::class,
             'pin' => 'hashed',
+            'pin_must_change' => 'boolean',
             'pin_failed_attempts' => 'integer',
             'pin_locked_until' => 'datetime',
             'balance' => 'integer',
-            'email_verified_at' => 'datetime',
-            'activated_at' => 'datetime',
         ];
-    }
-
-    /**
-     * The customer has bound a Firebase account and can log in to the app.
-     * Before that the account is "pending": deposits work at the counter, but
-     * there is no app login and no PIN yet.
-     */
-    public function isActivated(): bool
-    {
-        return $this->activated_at !== null;
-    }
-
-    public function hasPin(): bool
-    {
-        return $this->pin !== null;
     }
 
     public function major()
@@ -87,5 +69,10 @@ class Customer extends Authenticatable
     public function withdrawalAuthorizations()
     {
         return $this->hasMany(WithdrawalAuthorization::class);
+    }
+
+    public function pushTokens()
+    {
+        return $this->hasMany(CustomerPushToken::class);
     }
 }

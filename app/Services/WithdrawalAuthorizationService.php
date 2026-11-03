@@ -2,18 +2,21 @@
 
 namespace App\Services;
 
+use App\Contracts\PushNotifier;
 use App\Enums\AccountStatus;
 use App\Enums\WithdrawalAuthorizationStatus as Status;
 use App\Exceptions\AccountNotActiveException;
 use App\Exceptions\AuthorizationNotUsableException;
-use App\Exceptions\CustomerAppNotActivatedException;
 use App\Exceptions\InsufficientBalanceException;
 use App\Exceptions\InvalidPinException;
-use App\Exceptions\PinNotSetException;
+use App\Exceptions\PinChangeRequiredException;
 use App\Models\Customer;
 use App\Models\User;
 use App\Models\WithdrawalAuthorization;
+use App\Support\Rupiah;
 use Illuminate\Support\Facades\DB;
+
+use function Illuminate\Support\defer;
 
 /**
  * Withdrawals authorized by the customer in the mobile app (soal 1d).
@@ -25,6 +28,7 @@ use Illuminate\Support\Facades\DB;
  * Every request is bound to one teller, customer, amount and shift, expires,
  * and can produce at most one withdrawal. The PIN only ever travels from the
  * customer's phone to approve(); it is checked by PinService and never stored.
+ * A new request is pushed to the customer's phones (FCM); the app also polls.
  */
 class WithdrawalAuthorizationService
 {
@@ -32,6 +36,7 @@ class WithdrawalAuthorizationService
         private DailyReportService $reports,
         private SettingsService $settings,
         private PinService $pins,
+        private PushNotifier $push,
     ) {
     }
 
@@ -40,7 +45,7 @@ class WithdrawalAuthorizationService
      */
     public function create(User $teller, Customer $customer, int $amount): WithdrawalAuthorization
     {
-        return DB::transaction(function () use ($teller, $customer, $amount) {
+        $authorization = DB::transaction(function () use ($teller, $customer, $amount) {
             // Same lock order as transactions: teller, shift, customer.
             $shift = $this->reports->shiftForTransaction($teller);
 
@@ -60,13 +65,10 @@ class WithdrawalAuthorizationService
                 throw new AccountNotActiveException($customer->account_status);
             }
 
-            // Only the app can approve; without it the request could only expire.
-            if (! $customer->isActivated()) {
-                throw new CustomerAppNotActivatedException;
-            }
-
-            if (! $customer->hasPin()) {
-                throw new PinNotSetException;
+            // Until the customer replaced the temporary PIN, the app can do
+            // nothing but the PIN change, so the request could only expire.
+            if ($customer->pin_must_change) {
+                throw new PinChangeRequiredException;
             }
 
             if ($customer->pin_locked_until?->isFuture()) {
@@ -84,11 +86,21 @@ class WithdrawalAuthorizationService
                 'expires_at' => now()->addSeconds(config('bank.withdrawal_authorization_pending_seconds')),
             ]);
         });
+
+        // After the response is sent, so FCM never slows down or fails the teller's request.
+        defer(fn () => rescue(fn () => $this->push->notify(
+            $authorization->customer,
+            'Permintaan penarikan',
+            'Teller '.$authorization->teller->full_name.' meminta persetujuan penarikan '.Rupiah::format($authorization->amount).'. Buka aplikasi untuk menyetujui atau menolak.',
+            ['type' => 'withdrawal_authorization', 'id' => $authorization->public_id],
+        )));
+
+        return $authorization;
     }
 
     /**
      * Customer approves with their PIN. Wrong PINs count toward the same lock as
-     * login and PIN change; the counter is saved even though the request fails.
+     * login, unlock and PIN change; the counter is saved even though the request fails.
      */
     public function approve(WithdrawalAuthorization $authorization, Customer $customer, string $pin): WithdrawalAuthorization
     {

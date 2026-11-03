@@ -4,10 +4,9 @@ namespace App\Http\Controllers\API\Customer;
 
 use App\Enums\TransactionTypes;
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Customer\SetUpPinRequest;
 use App\Http\Resources\CustomerCardResource;
 use App\Http\Resources\StatementLineResource;
-use App\Services\CustomerAuthService;
+use App\Rules\NotWeakPin;
 use App\Services\PdfReportService;
 use App\Services\PinService;
 use App\Services\SettingsService;
@@ -49,26 +48,15 @@ class AccountController extends Controller
     }
 
     /**
-     * Create the PIN: right after activation, or after an administrator reset.
-     * Needs a fresh Firebase ID token of the bound account, so an unattended
-     * phone with a running session is not enough to set a PIN.
-     */
-    public function setUpPin(SetUpPinRequest $request, CustomerAuthService $auth, PinService $pins): JsonResponse
-    {
-        $auth->verifyReauthentication($request->user(), $request->validated('id_token'));
-        $pins->setUp($request->user(), $request->validated('pin'));
-
-        return response()->json(['message' => 'PIN berhasil dibuat.'], 201);
-    }
-
-    /**
-     * Change the PIN. Wrong current PINs count towards the same lock as withdrawals.
+     * Change the PIN; this is also how the customer replaces the temporary PIN
+     * at the first login. Wrong current PINs count towards the same lock as
+     * withdrawals.
      */
     public function changePin(Request $request, PinService $pins): JsonResponse
     {
         $data = $request->validate([
             'current_pin' => ['required', 'string', 'digits:6'],
-            'new_pin' => ['required', 'string', 'digits:6', 'different:current_pin', 'confirmed'],
+            'new_pin' => ['required', 'string', 'digits:6', 'different:current_pin', 'confirmed', new NotWeakPin],
         ]);
 
         $pins->change($request->user(), $data['current_pin'], $data['new_pin']);

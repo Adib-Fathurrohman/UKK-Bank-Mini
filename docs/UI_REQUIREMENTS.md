@@ -80,8 +80,8 @@ Common requirements for every page:
 ### Customer list
 - **Purpose:** browse accounts.
 - **Data / endpoints:** `GET /customers` with `search`, `major_id` (from
-  `GET /majors`), `class`, `group`, `status`, `activation` (`pending`/`activated`),
-  `trashed`. Show `activation_status` and `pin_set`.
+  `GET /majors`), `class`, `group`, `status`, `pin_must_change` (`1`/`0`), `trashed`.
+  Show the `pin_must_change` badge ("PIN sementara").
 - **Actions:** open detail, create.
 
 ### Customer detail
@@ -89,27 +89,30 @@ Common requirements for every page:
   `GET /audit/transactions?customer_id={id}`. Statement PDF
   `GET /customers/{id}/statement?from=&to=`.
 - **Actions:** edit, reset PIN (`POST /admin/customers/{id}/pin-reset`, a button with a
-  confirmation; no PIN input), suspend/activate, print card, deactivate.
-- **States:** closed account (`deleted_at` set): read-only; `activation_status`
-  pending/activated with `activated_at`; `pin_set` ("PIN belum dibuat"); no email yet (ask
-  to add one: the student cannot activate the app without it).
+  confirmation; no PIN input; shows the new temporary PIN once), suspend/activate, print
+  card, deactivate.
+- **States:** closed account (`deleted_at` set): read-only; `pin_must_change` ("PIN
+  sementara": the student has not logged in yet or was reset; no withdrawal possible).
 
 ### Open account
-- **Endpoints:** `GET /majors`, `POST /admin/customers` (nis, full_name, email, class,
-  major_id, group). **No PIN field**: the student creates the PIN in the app.
+- **Endpoints:** `GET /majors`, `POST /admin/customers` (nis, full_name, class,
+  major_id, group, optional email). **No PIN field**: the system generates a temporary
+  PIN.
 - **States:** field errors (including a duplicate email); success shows the generated
-  account number and the next steps for the student: install the app, sign in with the
-  registered email, enter the NIS, create a PIN.
+  account number and the **temporary PIN once** (`temporary_pin`, in a dialog with
+  copy/print and a warning that it is not shown again), and the next step for the
+  student: log in to the app with the NIS and that PIN, then replace it.
 
 ### Edit account / suspend
 - **Endpoint:** `PATCH /admin/customers/{id}` (any of nis, full_name, email, class,
   major_id, group, `account_status` active/suspended). No PIN field.
-- **Notes:** account number and balance are not editable; the email is editable only
-  while activation is pending (e.g. to fix a typo before the student activates).
+- **Notes:** account number and balance are not editable; the email is optional and
+  editable at any time.
 
 ### Reset PIN
 - **Endpoint:** `POST /admin/customers/{id}/pin-reset` (no body).
-- **Notes:** removes the PIN and any lock; the student creates a new one in the app.
+- **Notes:** returns a new **temporary PIN** (show once), lifts any lock and ends the
+  student's app sessions; the student must replace the PIN at the next login.
   Until then the customer cannot withdraw.
 
 ### Print customer card
@@ -214,8 +217,7 @@ Common requirements for every page:
   - QR scan via camera (`webcam`), keyboard-wedge scanner input (`usb`), or manual
     entry (`disabled`), always with a manual fallback field;
   - customer panel: name, account number, NIS, class/major, status, balance, PIN lock,
-    whether the customer app is activated (`activation_status`) and has a PIN
-    (`pin_set`);
+    and whether the customer still has the temporary PIN (`pin_must_change`);
   - amount input (integer, **multiples of 100**, ≤ 100,000,000);
   - withdrawal pre-check: `balance − amount ≥ min_balance` before sending the request
     (or showing the PIN pad in terminal mode);
@@ -224,15 +226,15 @@ Common requirements for every page:
     *Withdrawal approval*);
   - withdrawal, `terminal` mode: customer PIN pad (masked, cleared after each attempt;
     show `remaining_attempts` / lock time); in `both` mode offer both;
-  - no withdrawal at all (any mode) when `activation_status = pending` ("Nasabah belum
-    mengaktifkan aplikasi") or `pin_set = false` ("Nasabah belum membuat PIN");
+  - no withdrawal at all (any mode) while `pin_must_change` is true ("Nasabah belum
+    mengganti PIN sementara");
   - `Idempotency-Key` per confirmed submission, reused on retry; submit disabled while
     pending;
   - keyboard operation (Enter to confirm) as requested in the interview.
 - **States:** shift not open → counter disabled; account `suspended` → transactions
-  disabled; PIN locked → withdraw disabled; app not activated or no PIN → withdraw
-  disabled; `422` business message (`code: customer_app_not_activated` or `pin_not_set`
-  if the state changed after the lookup); success with new balance and receipt option.
+  disabled; PIN locked → withdraw disabled; temporary PIN → withdraw disabled; `422`
+  business message (`code: pin_change_required` if the state changed after the lookup);
+  success with new balance and receipt option.
 - **Permissions:** teller.
 
 ### Withdrawal approval (waiting screen)
@@ -280,46 +282,38 @@ Common requirements for every page:
 
 ## Mobile User (customer, React Native + Expo)
 
-Full client contract for these screens: [FRONTEND_HANDOFF.md §15.10](FRONTEND_HANDOFF.md#1510-customer-activation-pin-login-unlock-and-password-firebase).
+Full client contract for these screens: [FRONTEND_NIS_PIN_FCM.md](FRONTEND_NIS_PIN_FCM.md).
 
-### Sign-in
-- **Endpoints:** Firebase sign-in (Google, or email/password: sign in or create an
-  account, then verify the email through Firebase's email), then
-  `POST /customer/auth/login` (`id_token`).
-- **States:** wrong email/password (one generic message), waiting for email
-  verification, `account_not_linked` (first time → Activation), `email_not_verified`,
-  `account_inactive`, `503`, `429`; refuse `actor: "staff"`; `customer.pin_set = false` →
-  Create PIN.
-- **Storage:** token and `expires_at` in `expo-secure-store`.
-- **Note:** NIS + PIN does not sign in.
+### Login
+- **Endpoint:** `POST /customer/login` (`identifier` = NIS or account number, `pin`).
+- **States:** wrong NIS/PIN (one generic message), lock message with unlock time,
+  closed account, `429`; refuse `actor: "staff"`; `must_change_pin: true` → Change
+  temporary PIN.
+- **Storage:** token and `expires_at` in `expo-secure-store`; never the PIN.
 
-### Activation (first sign-in)
-- **Endpoint:** `POST /customer/activation` (`nis`, `id_token`).
-- **Data:** the signed-in email (read-only) and an NIS field.
-- **States:** `activation_mismatch` (NIS and email do not match: check the NIS or sign in
-  with the registered email), `already_activated` (activated with another account),
-  `identity_already_linked`, `email_not_verified`, `account_inactive`, Firebase
-  unavailable. Success → Create PIN.
+### Change temporary PIN (forced)
+- **Endpoint:** `POST /customer/pin` (`current_pin` = the temporary PIN, `new_pin`,
+  `new_pin_confirmation`).
+- **When:** right after a login with `must_change_pin: true`, and whenever the API answers
+  `428 pin_change_required` (handle globally; do not log out).
+- **States:** wrong temporary PIN (`remaining_attempts`, lock), new PIN errors (same as
+  the temporary one, too easy: repeated digit or straight run, confirmation mismatch).
+  Success → Home, then register the push token.
 
-### Create PIN
-- **Endpoint:** `POST /customer/pin/setup` (`id_token` fresh from Firebase, `pin`,
-  `pin_confirmation`).
-- **When:** right after activation, and whenever `pin_set` is false (after an
-  administrator reset).
-- **States:** validation (6 digits, confirmed), `identity_mismatch` (sign in again),
-  `pin_already_set` (go to unlock), `401` Firebase token expired (sign in again).
+### Push notifications
+- **Endpoints:** `POST /customer/push-tokens` (`token`, `platform`) after the PIN change,
+  on every start while logged in and on FCM token refresh; `DELETE /customer/push-tokens`
+  (`token`) when the customer turns notifications off.
+- **Functions:** ask the notification permission; a push `data.type =
+  withdrawal_authorization` opens the approval for `data.id` (after the PIN unlock); in
+  the foreground show an in-app banner and refresh the list.
+- Details: [FRONTEND_NIS_PIN_FCM.md](FRONTEND_NIS_PIN_FCM.md) §2.6.
 
 ### PIN unlock
 - **Endpoint:** `POST /customer/unlock` (`pin`, 6-digit numeric keypad).
 - **When:** app start or return from background while the session is valid.
 - **States:** wrong PIN with `remaining_attempts`; lock message with unlock time (3
-  wrong PINs anywhere); `422 pin_not_set` → Create PIN; `401` → session over → Firebase
-  sign-in.
-
-### Forgot / change password
-- **Functions:** Firebase `sendPasswordResetEmail` (always the same confirmation text);
-  change password with re-authentication then `updatePassword` (email/password accounts
-  only). No backend endpoint.
+  wrong PINs anywhere); `428` → Change temporary PIN; `401` → session over → Login.
 
 ### Home / balance
 - **Endpoints:** `GET /customer/balance`, `GET /customer/transactions?per_page=5`.
@@ -369,17 +363,16 @@ Full client contract for these screens: [FRONTEND_HANDOFF.md §15.10](FRONTEND_H
 
 ### Logout
 - **Endpoints:** `POST /customer/logout` (this device) or `POST /customer/logout-all`
-  (all devices); then Firebase sign-out; always delete the stored token.
+  (all devices); always delete the stored token (the server removes the push token).
 
 ---
 
 ## Not supported by the API (do not build)
 
 - Staff "change my password" or profile editing; any admin-account management.
-- Staff forgot password; self-service forgot PIN (an administrator resets it, then the
-  student creates a new one). Customer passwords are reset through Firebase in the app.
-- Customer self-registration (accounts come from the administrator; the student only
-  activates them).
+- Staff forgot password; self-service forgot PIN (an administrator reset gives a new
+  temporary PIN).
+- Customer self-registration (accounts come from the administrator).
 - Customer-initiated transfers or payments; starting deposits/withdrawals from the
   mobile app (the app only approves or rejects a teller's withdrawal request).
 - Restoring closed accounts; major management.

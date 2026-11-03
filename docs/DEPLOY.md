@@ -1,7 +1,7 @@
 # Deployment (VPS, GitHub Actions)
 
 Production: staff web app and API on **https://bank.rumput.tech** (API under `/api`),
-customer app on **https://app.rumput.tech** (activation page `/aktivasi`).
+customer app on **https://app.rumput.tech** (if it gets a web build).
 
 The workflow [.github/workflows/ci-cd.yml](../.github/workflows/ci-cd.yml) runs the tests on
 every push and pull request to `main` and `production`. A push to **`production`** that
@@ -95,13 +95,12 @@ DB_PASSWORD=<strong password>
 
 FIREBASE_PROJECT_ID=bank-mini-rumput
 FIREBASE_CREDENTIALS=storage/app/private/firebase-credentials.json
-FIREBASE_ALLOWED_PROVIDERS=password,google.com
 
 CUSTOMER_SESSION_MINUTES=43200
 ```
 
-No mail settings are needed: the backend sends no email (Firebase sends its own
-verification and password-reset emails).
+No mail settings are needed: the backend sends no email. The Firebase key is only used
+for push notifications (FCM); without it everything else works.
 
 Copy the Firebase service account key from your computer (it is never in git):
 
@@ -178,7 +177,7 @@ Later deploys: merge or push to `production`.
 | Symptom | Cause |
 |---|---|
 | Deploy fails at "Missing .env" | Create `/var/www/bank-mini-laravel/.env` (section 2) |
-| Log line "Firebase key ... not found" | Copy the key (section 2); customer login answers `503 auth_unavailable` until then |
+| Log line "Firebase key ... not found" | Copy the key (section 2); until then no push notifications are sent (the app still polls) |
 | `Permission denied (publickey)` | Public deploy key not in the server's `~/.ssh/authorized_keys`, or wrong `DEPLOY_USER` |
 | `Host key verification failed` | `DEPLOY_KNOWN_HOSTS` does not match the server |
 | 500 with "Permission denied" in `storage/` | `WEB_USER` differs from the PHP-FPM user |

@@ -13,25 +13,13 @@ test('staff log in through the single gateway', function () {
         ->assertJsonPath('data.user.role', 'supervisor');
 });
 
-test('customers log in through the single gateway with a Firebase ID token', function () {
-    $customer = Customer::factory()->activated('uid-budi')->create(['email' => 'budi@example.test']);
-    $idToken = fakeFirebase()->issue('uid-budi', 'budi@example.test');
-
-    $this->postJson('/api/login', ['id_token' => $idToken])
-        ->assertOk()
-        ->assertJsonPath('data.actor', 'customer')
-        ->assertJsonPath('data.customer.id', $customer->id);
-});
-
-test('NIS and PIN are not login credentials', function () {
+test('customers log in through the single gateway with NIS and PIN', function () {
     $customer = Customer::factory()->create(['nis' => '20260001']);
 
     $this->postJson('/api/login', ['identifier' => '20260001', 'pin' => '123456'])
-        ->assertUnprocessable()
-        ->assertJsonValidationErrors(['username' => 'Isi username dan password (staf), atau masuk dengan akun Google/email (nasabah).'])
-        ->assertJsonMissingPath('data.token');
-
-    expect($customer->tokens()->count())->toBe(0);
+        ->assertOk()
+        ->assertJsonPath('data.actor', 'customer')
+        ->assertJsonPath('data.customer.id', $customer->id);
 });
 
 test('the gateway validates each kind of credentials', function () {
@@ -39,9 +27,13 @@ test('the gateway validates each kind of credentials', function () {
         ->assertUnprocessable()
         ->assertJsonValidationErrors('password');
 
+    $this->postJson('/api/login', ['identifier' => '20260001', 'pin' => '12'])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('pin');
+
     $this->postJson('/api/login', [])
         ->assertUnprocessable()
-        ->assertJsonValidationErrors('username');
+        ->assertJsonValidationErrors(['username' => 'Isi username dan password (staf), atau NIS/nomor rekening dan PIN (nasabah).']);
 });
 
 test('wrong credentials are rejected through the gateway', function () {

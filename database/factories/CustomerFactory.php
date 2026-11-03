@@ -20,7 +20,8 @@ class CustomerFactory extends Factory
 
     /**
      * Define the model's default state: an established customer who has
-     * activated the app and created PIN 123456. Use pending() for a new account.
+     * replaced the temporary PIN with 123456. Use mustChangePin() for a new
+     * account (or one whose PIN an administrator reset).
      *
      * @return array<string, mixed>
      */
@@ -31,41 +32,23 @@ class CustomerFactory extends Factory
             'nis' => fake()->unique()->numerify('2026####'),
             'full_name' => fake()->name(),
             'email' => fake()->unique()->safeEmail(),
-            'firebase_uid' => 'firebase-'.fake()->unique()->bothify('????????????'),
-            'email_verified_at' => now(),
-            'activated_at' => now(),
             'class' => fake()->randomElement(['X', 'XI', 'XII']),
             'major_id' => Major::factory(),
             'group' => fake()->randomElement(['1', '2', '3', '4']),
             'account_status' => AccountStatus::ACTIVE,
             'pin' => static::$pin ??= Hash::make('123456'),
+            'pin_must_change' => false,
             'balance' => 0,
         ];
     }
 
     /**
-     * Activated with a given Firebase UID.
+     * Still has the temporary PIN from the system (here 123456): logged in
+     * never, or since an administrator reset.
      */
-    public function activated(?string $firebaseUid = null): static
+    public function mustChangePin(): static
     {
-        return $this->state(fn (array $attributes) => [
-            'firebase_uid' => $firebaseUid ?? 'firebase-'.fake()->unique()->bothify('????????????'),
-            'email_verified_at' => now(),
-            'activated_at' => now(),
-        ]);
-    }
-
-    /**
-     * A new account: not activated in the app yet, so no Firebase account and no PIN.
-     */
-    public function pending(): static
-    {
-        return $this->state(fn (array $attributes) => [
-            'firebase_uid' => null,
-            'email_verified_at' => null,
-            'activated_at' => null,
-            'pin' => null,
-        ]);
+        return $this->state(fn (array $attributes) => ['pin_must_change' => true]);
     }
 
     public function inactive(): static

@@ -8,8 +8,8 @@ portal nasabah. Spesifikasi ada di [PRD.md](PRD.md); urutan pengerjaan di
 [docs/API.md](docs/API.md).
 
 **Teknologi:** Laravel 13 (PHP 8.3+), MariaDB (InnoDB), Laravel Sanctum (token
-API), Firebase Authentication lewat Firebase Admin SDK `kreait/firebase-php` (login
-nasabah), DomPDF (laporan PDF), OpenSpout (impor spreadsheet), Pest.
+API), Firebase Cloud Messaging lewat Firebase Admin SDK `kreait/firebase-php` (notifikasi
+push ke aplikasi nasabah), DomPDF (laporan PDF), OpenSpout (impor spreadsheet), Pest.
 
 ## Instalasi
 
@@ -47,17 +47,18 @@ SANCTUM_EXPIRATION=480          # masa berlaku token staf dalam menit
 CUSTOMER_SESSION_MINUTES=43200  # masa berlaku sesi aplikasi nasabah (30 hari)
 ```
 
-Login nasabah memakai Firebase Authentication (Google atau email/password). Backend tidak
-mengirim email sama sekali, jadi tidak perlu SMTP. Isi juga (jangan commit kredensial asli):
+Nasabah login dengan NIS/nomor rekening + PIN. Firebase hanya dipakai untuk notifikasi
+push (FCM); tanpa kredensial Firebase semua fitur lain tetap jalan. Backend tidak mengirim
+email, jadi tidak perlu SMTP. Isi juga (jangan commit kredensial asli):
 
 ```dotenv
 FIREBASE_PROJECT_ID=bank-mini-rumput
 FIREBASE_CREDENTIALS=storage/app/private/firebase-credentials.json   # service account, hanya di server
-FIREBASE_ALLOWED_PROVIDERS=password,google.com
 ```
 
-Pengaturan Firebase Console, emulator Firebase untuk pengembangan, dan langkah migrasi
-data lama ada di [docs/CUSTOMER_AUTH.md](docs/CUSTOMER_AUTH.md).
+Detail login nasabah, PIN sementara, notifikasi push, dan langkah migrasi data lama ada
+di [docs/CUSTOMER_AUTH.md](docs/CUSTOMER_AUTH.md); panduan frontend di
+[docs/FRONTEND_NIS_PIN_FCM.md](docs/FRONTEND_NIS_PIN_FCM.md).
 
 Jalankan migration, seeder, dan server:
 
@@ -92,14 +93,13 @@ shift baru hari ini.
 | Administrator | `admin` | `password` |
 | Supervisor | `supervisor` | `password` |
 | Teller | `teller` | `password` |
-| Nasabah | NIS `20260001`–`20260003` (rekening `RPL-2026-001`, `DKV-2026-001`, `RPL-2026-002`); email `budi.santoso@`, `andi.pratama@`, `citra.lestari@example.test` | Belum ada PIN (dibuat nasabah di aplikasi) |
+| Nasabah | NIS `20260001`–`20260003` atau rekening `RPL-2026-001`, `DKV-2026-001`, `RPL-2026-002` | PIN sementara `123456` (wajib diganti saat login pertama) |
 
 Semua aktor dapat login lewat satu endpoint, `POST /api/login`: staf dengan username dan
-password, nasabah dengan ID token Firebase. NIS + PIN bukan kredensial login. Nasabah demo
-berstatus belum aktif dan belum punya PIN: nasabah masuk ke aplikasi dengan email yang
-terdaftar, memasukkan NIS (aktivasi), lalu membuat PIN sendiri. Untuk mencobanya, ganti
-dulu email nasabah demo ke alamat asli. Sebelum itu nasabah demo hanya bisa menerima setoran,
-belum bisa menarik. Ganti semua password demo sebelum dipakai di luar lingkungan ujian.
+password, nasabah dengan NIS/nomor rekening dan PIN. Nasabah demo memakai PIN sementara
+`123456` dan wajib menggantinya saat login pertama; sebelum diganti, sesi hanya bisa
+mengganti PIN dan penarikan ditolak. Ganti semua password demo sebelum dipakai di luar
+lingkungan ujian.
 
 ## Pengujian
 
@@ -129,8 +129,8 @@ Jika user database tidak memiliki izin tersebut, berikan dulu sebagai root:
 | --- | --- |
 | Teller | Buka shift (hitung saldo awal per pecahan) → scan QR kartu nasabah atau ketik nomor rekening/NIS → setor, atau tarik: kirim permintaan ke aplikasi nasabah, tunggu disetujui, lalu selesaikan (atau, jika admin mengizinkan, nasabah mengetik PIN di loket) → cetak struk → koreksi jika salah ketik (otorisasi supervisor) → tutup shift (hitung uang fisik, harus sama dengan saldo sistem) → cetak laporan harian |
 | Supervisor | Periksa laporan satu per satu → setujui (kas otomatis pindah ke brankas), tahan dengan catatan, atau tolak (shift dibuka kembali untuk koreksi) → telusuri log audit dan jurnal |
-| Administrator | Kelola staf (buat, impor spreadsheet, blokir, hapus yang belum pernah dipakai), buka rekening dengan email siswa (nomor otomatis `KODE-TAHUN-URUT`, tanpa PIN), cetak kartu QR, reset PIN (PIN dihapus, nasabah membuat yang baru), nonaktifkan lulusan (akun Firebase ikut dinonaktifkan), atur saldo minimum, mode pemindai, dan mode verifikasi penarikan, unduh laporan PDF |
-| Nasabah | Masuk dengan Firebase (Google atau email/password) → aktivasi pertama dengan NIS → buat PIN sendiri → buka aplikasi dengan PIN → lihat saldo, mutasi, kartu digital dengan QR, unduh mutasi PDF, ganti PIN, setujui (dengan PIN) atau tolak permintaan penarikan dari teller |
+| Administrator | Kelola staf (buat, impor spreadsheet, blokir, hapus yang belum pernah dipakai), buka rekening (nomor otomatis `KODE-TAHUN-URUT`, PIN sementara ditampilkan sekali, email opsional), cetak kartu QR, reset PIN (PIN sementara baru, semua sesi nasabah berakhir), nonaktifkan lulusan, atur saldo minimum, mode pemindai, dan mode verifikasi penarikan, unduh laporan PDF |
+| Nasabah | Login dengan NIS + PIN → ganti PIN sementara saat login pertama → buka aplikasi dengan PIN → lihat saldo, mutasi, kartu digital dengan QR, unduh mutasi PDF, ganti PIN, terima notifikasi push saat teller membuat permintaan penarikan, setujui (dengan PIN) atau tolak |
 
 Daftar endpoint, parameter, dan contoh respons ada di [docs/API.md](docs/API.md).
 
@@ -144,21 +144,20 @@ Daftar endpoint, parameter, dan contoh respons ada di [docs/API.md](docs/API.md)
   yang dibatalkan.
 - **Saldo minimum:** penarikan ditolak jika sisa saldo di bawah saldo minimum
   (pengaturan admin, awal Rp10.000).
-- **PIN penarikan:** setiap penarikan wajib PIN 6 digit nasabah, yang dibuat nasabah
-  sendiri di aplikasi setelah aktivasi (admin tidak pernah mengisi PIN). Sebelum ada PIN,
-  penarikan dalam bentuk apa pun ditolak. Bawaannya
+- **PIN penarikan:** setiap penarikan wajib PIN 6 digit nasabah. Rekening baru (dan
+  reset PIN oleh admin) mendapat PIN sementara acak dari sistem yang hanya ditampilkan
+  sekali ke admin; nasabah wajib menggantinya saat login pertama, dan PIN sementara tidak
+  pernah bisa dipakai untuk penarikan. Bawaannya
   (`withdrawal_verification = mobile`) nasabah menyetujui di aplikasinya sendiri,
   sehingga teller tidak pernah melihat atau mengirim PIN; nasabah tidak dapat
   memulai penarikan. Admin dapat mengizinkan PIN diketik di loket (`terminal` atau
   `both`). Detail: [docs/PIN_VERIFICATION.md](docs/PIN_VERIFICATION.md).
-- **Blokir PIN:** 3 kali PIN salah berturut-turut (buka aplikasi, persetujuan, penarikan
-  di loket, atau ganti PIN) memblokir PIN selama 15 menit di semua
+- **Blokir PIN:** 3 kali PIN salah berturut-turut (login, buka aplikasi, persetujuan,
+  penarikan di loket, atau ganti PIN) memblokir PIN selama 15 menit di semua
   tempat.
-- **Login nasabah:** sesi nasabah hanya dibuat dari ID token Firebase yang terverifikasi
-  (login Google atau email/password). Aktivasi pertama: nasabah memasukkan NIS, dan email
-  Firebase yang sudah terverifikasi harus sama dengan email yang didaftarkan admin. Email
-  verifikasi dikirim oleh Firebase, bukan oleh backend. Detail:
-  [docs/CUSTOMER_AUTH.md](docs/CUSTOMER_AUTH.md).
+- **Login nasabah:** NIS atau nomor rekening + PIN (email tidak wajib). Permintaan
+  penarikan baru dikirim sebagai notifikasi push (FCM) ke HP nasabah; aplikasi tetap
+  melakukan polling. Detail: [docs/CUSTOMER_AUTH.md](docs/CUSTOMER_AUTH.md).
 - **Shift dan penutupan kas:** transaksi hanya dapat dicatat dalam shift yang
   dibuka hari ini. Shift hanya dapat ditutup (dan laporannya dicetak) jika uang
   fisik = saldo awal + setoran − penarikan.

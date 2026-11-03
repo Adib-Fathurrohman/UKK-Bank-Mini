@@ -19,9 +19,6 @@ test('customer is related to a major and hides its pin', function () {
         'group' => '1',
         'account_status' => AccountStatus::ACTIVE,
         'pin' => 'hashed-pin',
-        // A PIN only exists on an activated account.
-        'firebase_uid' => 'uid-'.uniqid(),
-        'activated_at' => now(),
         'balance' => 0,
     ]);
 
@@ -45,9 +42,6 @@ test('customer can be soft deleted and restored', function () {
         'group' => '2',
         'account_status' => AccountStatus::INACTIVE,
         'pin' => 'hashed-pin',
-        // A PIN only exists on an activated account.
-        'firebase_uid' => 'uid-'.uniqid(),
-        'activated_at' => now(),
         'balance' => 0,
     ]);
 
