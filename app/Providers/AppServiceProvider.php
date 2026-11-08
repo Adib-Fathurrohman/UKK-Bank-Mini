@@ -9,6 +9,7 @@ use App\Services\Firebase\KreaitFirebaseAuth;
 use App\Services\Push\FcmPushNotifier;
 use Google\Auth\Cache\FileSystemCacheItemPool;
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\Middleware\TrustProxies;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
@@ -64,6 +65,11 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Read from config (not env()), so it keeps working with config:cache.
+        if ($proxies = config('bank.trusted_proxies')) {
+            TrustProxies::at($proxies === '*' ? '*' : array_map('trim', explode(',', $proxies)));
+        }
+
         // Customer sessions last much longer than staff ones (CUSTOMER_SESSION_MINUTES):
         // their tokens carry their own expires_at, which replaces the global
         // SANCTUM_EXPIRATION. Staff tokens and older customer tokens keep the global rule.

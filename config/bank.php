@@ -83,4 +83,19 @@ return [
 
     'customer_session_minutes' => (int) env('CUSTOMER_SESSION_MINUTES', 43200),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Trusted Proxies
+    |--------------------------------------------------------------------------
+    |
+    | Comma-separated addresses of the reverse proxies in front of the app
+    | (e.g. "127.0.0.1" for Nginx or a Cloudflare Tunnel on the same server),
+    | or "*" for all. Their X-Forwarded-* headers then tell the app the real
+    | client address and scheme, which the login rate limits depend on. Empty:
+    | no proxy is trusted.
+    |
+    */
+
+    'trusted_proxies' => env('TRUSTED_PROXIES'),
+
 ];

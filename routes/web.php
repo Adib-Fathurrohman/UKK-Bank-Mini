@@ -2,6 +2,8 @@
 
 use Illuminate\Support\Facades\Route;
 
-Route::get('/', function () {
-    return view('welcome');
-});
+// The API has no web pages; this tells a visitor (or a monitor) what is here.
+Route::get('/', fn () => response()->json([
+    'name' => config('bank.name').' API',
+    'status' => 'ok',
+]));
