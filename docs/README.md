@@ -42,7 +42,7 @@ Also available:
 | How to authenticate and store tokens | [AUTH.md](AUTH.md) |
 | Customer activation, customer PIN, Firebase setup | [CUSTOMER_AUTH.md](CUSTOMER_AUTH.md) |
 | Firebase project and web config for the customer app | [firebase-web-config.md](firebase-web-config.md) |
-| Production deployment (VPS, GitHub Actions CI/CD) | [DEPLOY.md](DEPLOY.md) |
+| Production deployment (versioned releases, VPS layout, rollback) | [DEPLOY.md](DEPLOY.md) |
 | Field meanings and enums | [DATA_MODEL.md](DATA_MODEL.md) |
 | What to build in the UI | [UI_REQUIREMENTS.md](UI_REQUIREMENTS.md) |
 | Gaps, quirks, limitations | [FRONTEND_HANDOFF.md §18–20](FRONTEND_HANDOFF.md#18-known-backend-limitations) |
