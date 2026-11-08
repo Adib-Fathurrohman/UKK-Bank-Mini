@@ -35,6 +35,7 @@ class TransactionService
         private DailyReportService $reports,
         private SettingsService $settings,
         private PinService $pins,
+        private PinResetService $pinResets,
     ) {
     }
 
@@ -53,6 +54,7 @@ class TransactionService
             return $existing;
         }
 
+        $this->pinResets->ensureWithdrawalsAllowed($customer);
         $this->pins->verify($customer, $pin);
 
         return $this->record(TransactionTypes::WITHDRAWAL, $customer, $amount, $teller, idempotencyKey: $idempotencyKey);

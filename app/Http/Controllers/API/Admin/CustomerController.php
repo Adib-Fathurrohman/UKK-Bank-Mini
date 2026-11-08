@@ -11,6 +11,7 @@ use App\Models\Customer;
 use App\Services\CustomerImportService;
 use App\Services\CustomerService;
 use App\Services\PdfReportService;
+use App\Services\PinResetService;
 use App\Services\PinService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -116,9 +117,11 @@ class CustomerController extends Controller
      * Forgotten PIN: remove it (and any lock) so the customer creates a new
      * one in the app, after signing in with their Firebase account again.
      */
-    public function resetPin(Customer $customer, PinService $pins): JsonResponse
+    public function resetPin(Customer $customer, PinService $pins, PinResetService $resets): JsonResponse
     {
         $pins->reset($customer);
+        // The PIN is gone, so a self-service request has no purpose left.
+        $resets->cancelOpenFor($customer, 'admin_reset');
 
         return response()->json([
             'message' => 'PIN direset. Nasabah membuat PIN baru di aplikasi Bank Mini.',

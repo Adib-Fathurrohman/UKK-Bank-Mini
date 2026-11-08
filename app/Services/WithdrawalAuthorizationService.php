@@ -38,6 +38,7 @@ class WithdrawalAuthorizationService
         private SettingsService $settings,
         private PinService $pins,
         private PushNotifier $push,
+        private PinResetService $pinResets,
     ) {
     }
 
@@ -74,6 +75,9 @@ class WithdrawalAuthorizationService
             if (! $customer->hasPin()) {
                 throw new PinNotSetException;
             }
+
+            // A forgotten-PIN request is open: the old PIN may be known to someone else.
+            $this->pinResets->ensureWithdrawalsAllowed($customer);
 
             if ($customer->pin_locked_until?->isFuture()) {
                 throw InvalidPinException::locked($customer->pin_locked_until);
@@ -114,6 +118,8 @@ class WithdrawalAuthorizationService
         if ($customer->account_status !== AccountStatus::ACTIVE) {
             throw new AccountNotActiveException($customer->account_status);
         }
+
+        $this->pinResets->ensureWithdrawalsAllowed($customer);
 
         // Outside the transaction below, so a failed attempt is not rolled back.
         $this->pins->verify($customer, $pin);

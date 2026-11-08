@@ -1239,7 +1239,8 @@
         "422 PIN locked",
         "422 insufficient balance (minimum balance)",
         "422 deposit errors",
-        "422 {message, code:'pin_not_set'} the customer has not created a PIN yet"
+        "422 {message, code:'pin_not_set'} the customer has not created a PIN yet",
+        "422 pin_reset_in_progress (a forgotten-PIN request is open on the account)"
       ]
     },
     "Teller\\WithdrawalAuthorizationController@store": {
@@ -1270,7 +1271,8 @@
         "422 no shift / shift closed / earlier shift still open",
         "422 account not active",
         "422 {message, code:'pin_not_set'} the customer has not created a PIN yet",
-        "422 {message, code:'customer_app_not_activated'} the customer has not activated the app"
+        "422 {message, code:'customer_app_not_activated'} the customer has not activated the app",
+        "422 pin_reset_in_progress (a forgotten-PIN request is open on the account)"
       ],
       "notes": "After the response, an FCM push goes to the customer's registered phones (failures only logged)."
     },
@@ -1386,7 +1388,8 @@
         "422 not usable in the current status {message, status}",
         "422 account not active",
         "404",
-        "422 {message, code:'pin_not_set'} the customer has not created a PIN yet"
+        "422 {message, code:'pin_not_set'} the customer has not created a PIN yet",
+        "422 pin_reset_in_progress (a forgotten-PIN request is open on the account)"
       ]
     },
     "Customer\\WithdrawalAuthorizationController@reject": {
@@ -1523,7 +1526,7 @@
       ]
     },
     "Admin\\CustomerController@resetPin": {
-      "purpose": "Forgotten PIN: remove the PIN and lift a PIN lock; the customer creates a new one in the app.",
+      "purpose": "Forgotten PIN, administrator route: remove the PIN and lift a PIN lock; the customer creates a new one in the app. Cancels the customer's open self-service reset request, if any.",
       "request": {
         "path_params": {
           "customer": "integer id"
@@ -1578,6 +1581,176 @@
         "429"
       ],
       "notes": ""
+    },
+    "Customer\\PinResetController@show": {
+      "purpose": "The customer's open forgotten-PIN request (pending or approved), or null. Overdue requests are expired first.",
+      "ownership": "scoped to the authenticated user",
+      "response": "200 {data: PinResetRequest {id (ULID), status, status_label, requested_at, available_at, ready, expires_at, approved_at, rejected_at, cancelled_at, completed_at, decision_note} | null}",
+      "errors": []
+    },
+    "Customer\\PinResetController@store": {
+      "purpose": "Ask for a forgotten-PIN reset. Pending until an administrator approves; the new PIN can be set only after available_at (24 hours later, config bank.pin_reset_wait_hours). The customer's phones get a push. While a request is open, withdrawals on the account are paused.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "body": {
+          "id_token": {
+            "type": "string",
+            "required": true,
+            "rules": "fresh Firebase ID token of the account bound to this customer, max 4096"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 {data: PinResetRequest {id (ULID), status, status_label, requested_at, available_at, ready, expires_at, approved_at, rejected_at, cancelled_at, completed_at, decision_note}} with status 'pending'",
+      "errors": [
+        "422 pin_not_set (no PIN to reset: create one with pin/setup)",
+        "409 pin_reset_already_requested",
+        "403 identity_mismatch",
+        "401 firebase_token_invalid",
+        "503 auth_unavailable",
+        "422 validation",
+        "429"
+      ]
+    },
+    "Customer\\PinResetController@cancel": {
+      "purpose": "Withdraw the request (pending or approved -> cancelled). Needs only the session: cancelling is the safe direction. Lifts the withdrawal pause.",
+      "ownership": "own requests only (customer_id); others return 404",
+      "request": {
+        "path_params": {
+          "pinResetRequest": "ULID (data.id of the request)"
+        }
+      },
+      "response": "200 {data: PinResetRequest {id (ULID), status, status_label, requested_at, available_at, ready, expires_at, approved_at, rejected_at, cancelled_at, completed_at, decision_note}} with status 'cancelled'",
+      "errors": [
+        "404",
+        "409 pin_reset_not_usable {message, status}"
+      ]
+    },
+    "Customer\\PinResetController@complete": {
+      "purpose": "Set the new PIN of an approved request once its waiting period is over (approved -> completed). Replaces the old PIN, lifts a PIN lock and lifts the withdrawal pause.",
+      "ownership": "own requests only (customer_id); others return 404",
+      "request": {
+        "path_params": {
+          "pinResetRequest": "ULID (data.id of the request)"
+        },
+        "body": {
+          "id_token": {
+            "type": "string",
+            "required": true,
+            "rules": "fresh Firebase ID token of the account bound to this customer, max 4096"
+          },
+          "pin": {
+            "type": "string",
+            "required": true,
+            "rules": "exactly 6 digits, confirmed"
+          },
+          "pin_confirmation": {
+            "type": "string",
+            "required": true,
+            "rules": "must equal pin"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {message:'PIN berhasil diganti.'}",
+      "errors": [
+        "404",
+        "409 pin_reset_not_approved",
+        "409 pin_reset_not_ready {message, code, available_at}",
+        "409 pin_reset_not_usable {message, code, status}",
+        "403 identity_mismatch",
+        "401 firebase_token_invalid",
+        "503 auth_unavailable",
+        "422 validation",
+        "429"
+      ]
+    },
+    "Admin\\PinResetRequestController@index": {
+      "purpose": "Forgotten-PIN requests, newest first, paginated. Overdue open requests are expired first.",
+      "request": {
+        "query": {
+          "status": {
+            "type": "string",
+            "required": false,
+            "rules": "pending, approved, rejected, cancelled, expired or completed"
+          },
+          "customer_id": {
+            "type": "integer",
+            "required": false,
+            "rules": "one account"
+          },
+          "page": {
+            "type": "integer",
+            "required": false,
+            "rules": ""
+          },
+          "per_page": {
+            "type": "integer",
+            "required": false,
+            "rules": "default 15"
+          }
+        }
+      },
+      "response": "200 paginated {data: [PinResetRequest {id (ULID), status, status_label, requested_at, available_at, ready, expires_at, approved_at, rejected_at, cancelled_at, completed_at, decision_note, customer{id, account_number, nis, full_name, class, group, major_name, account_status, balance, pin_locked_until, activation_status, pin_set}, decided_by (admin's full name)}], links, meta}",
+      "errors": [
+        "422 validation"
+      ]
+    },
+    "Admin\\PinResetRequestController@show": {
+      "purpose": "One forgotten-PIN request in any status.",
+      "request": {
+        "path_params": {
+          "pinResetRequest": "ULID (data.id of the request)"
+        }
+      },
+      "response": "200 {data: PinResetRequest {id (ULID), status, status_label, requested_at, available_at, ready, expires_at, approved_at, rejected_at, cancelled_at, completed_at, decision_note, customer{id, account_number, nis, full_name, class, group, major_name, account_status, balance, pin_locked_until, activation_status, pin_set}, decided_by (admin's full name)}}",
+      "errors": [
+        "404"
+      ]
+    },
+    "Admin\\PinResetRequestController@approve": {
+      "purpose": "Approve a pending request (pending -> approved). Does not shorten the waiting period: the customer can set the new PIN only from available_at. Pushes the customer. Confirm the student's identity in person first.",
+      "request": {
+        "path_params": {
+          "pinResetRequest": "ULID (data.id of the request)"
+        },
+        "body": {
+          "note": {
+            "type": "string",
+            "required": false,
+            "rules": "max 255, e.g. how the identity was checked"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data: PinResetRequest {id (ULID), status, status_label, requested_at, available_at, ready, expires_at, approved_at, rejected_at, cancelled_at, completed_at, decision_note, customer{id, account_number, nis, full_name, class, group, major_name, account_status, balance, pin_locked_until, activation_status, pin_set}, decided_by (admin's full name)}} with status 'approved'",
+      "errors": [
+        "404",
+        "409 pin_reset_not_usable {message, code, status}",
+        "422 validation"
+      ]
+    },
+    "Admin\\PinResetRequestController@reject": {
+      "purpose": "Reject a pending request (pending -> rejected). The customer may ask again. Pushes the customer.",
+      "request": {
+        "path_params": {
+          "pinResetRequest": "ULID (data.id of the request)"
+        },
+        "body": {
+          "note": {
+            "type": "string",
+            "required": false,
+            "rules": "max 255, e.g. how the identity was checked"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data: PinResetRequest {id (ULID), status, status_label, requested_at, available_at, ready, expires_at, approved_at, rejected_at, cancelled_at, completed_at, decision_note, customer{id, account_number, nis, full_name, class, group, major_name, account_status, balance, pin_locked_until, activation_status, pin_set}, decided_by (admin's full name)}} with status 'rejected'",
+      "errors": [
+        "404",
+        "409 pin_reset_not_usable {message, code, status}",
+        "422 validation"
+      ]
     }
   }
 }

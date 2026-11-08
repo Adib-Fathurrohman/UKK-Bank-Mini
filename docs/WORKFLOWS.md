@@ -123,6 +123,13 @@ and view).
 and clears `pin_failed_attempts` / `pin_locked_until`. `200` Customer (`pin_set: false`).
 The customer creates a new PIN in the app (1.1e); until then no withdrawal is possible.
 
+**3.2b Forgotten PIN, self-service:** the customer asks in the app (fresh Firebase sign-in) →
+`pending` (24-hour wait starts, withdrawals pause, push to the phones) → an administrator
+approves after checking the student's identity (`approved`) → once `available_at` has passed the
+customer sets the new PIN (`completed`, lock lifted, withdrawals resume). The customer can cancel
+at any time; an administrator can reject; an unused request expires after 7 days; an
+administrator `pin-reset` cancels it.
+
 **3.3 Graduate (close) an account**
 
 | | |

@@ -595,7 +595,34 @@ History stays.
 **Admin.** Forgotten PIN: removes the PIN and lifts a PIN lock; the customer creates a new
 one in the app (`POST /customer/pin/setup`). **200**
 `{ "message": "PIN direset. Nasabah membuat PIN baru di aplikasi Bank Mini.", "data": Customer }`
-(`pin_set: false`).
+(`pin_set: false`). Also cancels the customer's open self-service reset request.
+
+#### Forgotten PIN: self-service requests
+
+**Forgotten PIN, self-service (v0.1.1).** Two safeguards: an administrator must approve, and the
+new PIN can only be set 24 hours after the request (`BANK_PIN_RESET_WAIT_HOURS`; a request
+unused after `BANK_PIN_RESET_VALID_DAYS`, default 7, expires). Statuses: `pending` →
+`approved` → `completed`; also `rejected`, `cancelled`, `expired`. One open request per customer.
+While one is open, **withdrawals on the account are paused** (`422 pin_reset_in_progress`:
+counter, teller authorization and in-app approval), because the old PIN may be known to someone
+else; deposits are unaffected. The customer's phones get a push at each step, so the real owner
+can cancel.
+
+| Endpoint | Who | Body | Success |
+| --- | --- | --- | --- |
+| `GET /customer/pin-reset-request` | customer | — | `200 {data: PinResetRequest \| null}` (the open one) |
+| `POST /customer/pin-reset-requests` | customer | `{id_token}` (fresh Firebase sign-in) | `201 {data: PinResetRequest}` `pending` |
+| `POST /customer/pin-reset-requests/{id}/cancel` | customer | — | `200`, `cancelled` (session only) |
+| `POST /customer/pin-reset-requests/{id}/complete` | customer | `{id_token, pin, pin_confirmation}` | `200 {message: "PIN berhasil diganti."}` |
+| `GET /pin-reset-requests?status=&customer_id=`, `GET /pin-reset-requests/{id}` | admin, supervisor | — | `200` list / one (with `customer`, `decided_by`) |
+| `POST /admin/pin-reset-requests/{id}/approve`, `/reject` | admin | `{note?}` (max 255) | `200 {data: PinResetRequest}` |
+
+`PinResetRequest`: `{id (ULID), status, status_label, requested_at, available_at, ready,
+expires_at, approved_at, rejected_at, cancelled_at, completed_at, decision_note}`; `ready` is
+true once approved and `available_at` has passed. Refusals carry `code`:
+`pin_not_set` 422 (nothing to reset; use `pin/setup`), `pin_reset_already_requested` 409,
+`pin_reset_not_approved` 409, `pin_reset_not_ready` 409 (with `available_at`),
+`pin_reset_not_usable` 409 (with `status`), `identity_mismatch` 403, `firebase_token_invalid` 401.
 
 #### `GET /admin/customers/{id}/card`
 

@@ -172,6 +172,8 @@ All 74 API routes (`php artisan route:list --path=api`). Prefix `/api`.
 | PUT/PATCH | `/admin/customers/{customer}` | `staff:admin` |
 | POST | `/admin/customers/{customer}/deactivate` | `staff:admin` |
 | POST | `/admin/customers/{customer}/pin-reset` | `staff:admin` |
+| GET | `/pin-reset-requests`, `/pin-reset-requests/{request}` | `staff:admin,supervisor` |
+| POST | `/admin/pin-reset-requests/{request}/approve`, `/reject` | `staff:admin` |
 | GET | `/admin/customers/{customer}/card` | `staff:admin` |
 | GET | `/audit/transactions`, `/audit/transactions/export`, `/audit/transactions/{transaction}` | `staff:admin,supervisor` |
 | GET | `/audit/journals`, `/audit/journals/summary`, `/audit/journals/export` | `staff:admin,supervisor` |
@@ -190,7 +192,8 @@ All 74 API routes (`php artisan route:list --path=api`). Prefix `/api`.
 | GET | `/supervisor/cash-transfers`, `/supervisor/cash-transfers/{cashTransfer}` | `staff:supervisor` |
 | GET | `/customer/me`, `/customer/balance`, `/customer/card`, `/customer/transactions`, `/customer/transactions/{transaction}`, `/customer/statement/export` | `auth:sanctum`, `customer` |
 | POST | `/customer/logout`, `/customer/logout-all`, `/customer/pin` | `auth:sanctum`, `customer` |
-| POST | `/customer/unlock`, `/customer/pin/setup` | `auth:sanctum`, `customer`, `throttle:customer-unlock` |
+| POST | `/customer/unlock`, `/customer/pin/setup`, `/customer/pin-reset-requests`, `/customer/pin-reset-requests/{request}/complete` | `auth:sanctum`, `customer`, `throttle:customer-unlock` |
+| GET | `/customer/pin-reset-request` · POST `/customer/pin-reset-requests/{request}/cancel` | `auth:sanctum`, `customer` |
 | POST, DELETE | `/customer/push-tokens` | `auth:sanctum`, `customer`, `throttle:customer-push-token` |
 | GET | `/customer/withdrawal-authorizations`, `/customer/withdrawal-authorizations/{withdrawalAuthorization}` | `auth:sanctum`, `customer`, `throttle:withdrawal-authorization-poll` + ownership |
 | POST | `/customer/withdrawal-authorizations/{withdrawalAuthorization}/approve`, `/reject` | `auth:sanctum`, `customer`, `throttle:withdrawal-authorization-decide` + ownership |

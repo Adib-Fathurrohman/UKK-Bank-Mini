@@ -120,6 +120,7 @@ re-checks every request.
 | Settings edit | `PATCH /admin/settings` | admin |
 | Customer list / detail | `GET /customers`, `GET /customers/{id}` | admin, supervisor |
 | Customer open / edit / PIN reset / suspend / graduate / card | `POST /admin/customers`, `PATCH /admin/customers/{id}`, `POST /admin/customers/{id}/pin-reset`, `POST /admin/customers/{id}/deactivate`, `GET /admin/customers/{id}/card` | admin |
+| PIN reset requests (review / decide) | `GET /pin-reset-requests[/{id}]` / `POST /admin/pin-reset-requests/{id}/approve`, `.../reject` | admin, supervisor (read) / admin |
 | Customer statement PDF | `GET /customers/{id}/statement` | admin, supervisor |
 | Shift | `GET /teller/shift`, `POST /teller/shift/open`, `POST /teller/shift/close` | teller |
 | Shift history / print | `GET /teller/daily-reports`, `GET /teller/daily-reports/{id}`, `GET /teller/daily-reports/{id}/export` | teller (own) |
@@ -601,9 +602,27 @@ activation.
 perangkat"), then Firebase `signOut()`, then delete the stored token, even if the request
 failed.
 
-**Forgot PIN:** there is no self-service reset. The student asks an administrator, who
-resets it (`POST /admin/customers/{id}/pin-reset`); the app then shows PIN creation
-(`pin_set: false`, or `422 pin_not_set` on unlock).
+**Forgot PIN** has two routes.
+
+1. *At the counter:* the administrator resets it (`POST /admin/customers/{id}/pin-reset`);
+   the app then shows PIN creation (`pin_set: false`, or `422 pin_not_set` on unlock).
+2. *Self-service* (needs administrator approval and a 24-hour wait; see API.md, "Forgotten PIN:
+   self-service requests"). "Lupa PIN?" → fresh Firebase sign-in (Google works) →
+   `POST /customer/pin-reset-requests {id_token}` → show the status screen from
+   `GET /customer/pin-reset-request` (poll it when the app opens, and on a `type: pin_reset`
+   push):
+   - `pending`: "Menunggu persetujuan admin. Temui petugas bank mini dengan membawa kartu
+     pelajar." plus **Batalkan permintaan** (`POST .../{id}/cancel`).
+   - `approved`, `ready: false`: "Disetujui. PIN baru dapat dibuat mulai {available_at}"
+     (countdown) plus **Batalkan**.
+   - `approved`, `ready: true`: new PIN + confirmation screen, fresh Firebase sign-in →
+     `POST .../{id}/complete {id_token, pin, pin_confirmation}` → `200` → unlock screen.
+   - `data: null`: show "Lupa PIN?"; after `rejected`/`expired` the customer may ask again.
+   - Always tell the student: "Selama permintaan terbuka, penarikan ditunda
+     (`422 pin_reset_in_progress`). Jika bukan Anda yang meminta, batalkan sekarang."
+   - Codes: `pin_reset_already_requested`, `pin_reset_not_approved`, `pin_reset_not_ready`
+     (`available_at`), `pin_reset_not_usable` (`status`), `pin_not_set` (no PIN yet: go to PIN
+     creation). Show `message`.
 
 **Forgot password** (email/password accounts): `sendPasswordResetEmail(auth, email)`.
 Always show the same message ("Jika email terdaftar, tautan reset telah dikirim"),
@@ -645,6 +664,11 @@ the user's other Firebase sessions but **not** backend sessions on other devices
 - **Email field:** editable while pending, locked once `activation_status` is `activated`.
 - **"Reset PIN":** a button calling `POST /admin/customers/{id}/pin-reset` (no PIN input).
   It removes the PIN, and the student creates a new one in the app.
+- **"Permintaan reset PIN":** a list (`GET /pin-reset-requests?status=pending`, supervisors read
+  only) with the student's name, class, requested time and `available_at`. Admin buttons
+  **Setujui** / **Tolak** with an optional note (`POST /admin/pin-reset-requests/{id}/approve|reject`).
+  Remind the admin to check the student's card in person first. Approving does not skip the
+  24-hour wait.
 
 ### 15.11 Push notifications (FCM)
 

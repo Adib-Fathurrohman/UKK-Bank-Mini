@@ -69,7 +69,7 @@ Withdrawals: approve in the app with the PIN, or PIN at the teller terminal (by 
 | A2 | **Activation proof:** a Firebase ID token with a **verified** email equal to the email the administrator registered, plus the customer's **NIS**. No emailed link: Google accounts are verified, and for email/password Firebase sends the verification email itself. |
 | A3 | **The customer creates the PIN** after activation (`POST /customer/pin/setup`), with a fresh Firebase ID token of the bound account as re-authentication. Administrators never set a PIN. A PIN can only exist on an activated account (database `CHECK`). Until it exists, nothing that needs a PIN works: no app unlock, no withdrawal approval, no terminal withdrawal (`422 pin_not_set`). |
 | A4 | **The PIN is not a login credential.** NIS/account number + PIN never starts a session; the old `POST /customer/login` is removed. This deliberately departs from PRD FR-Auth-02. |
-| A5 | **Forgotten PIN:** an administrator resets it (`POST /admin/customers/{id}/pin-reset`). This removes the PIN and lifts any lock, and the customer creates a new one in the app the same way as the first. |
+| A5 | **Forgotten PIN:** two routes. (1) An administrator resets it at once (`POST /admin/customers/{id}/pin-reset`): removes the PIN and lifts any lock, and the customer creates a new one in the app the same way as the first. (2) Self-service (`POST /customer/pin-reset-requests`, fresh Firebase sign-in): an administrator must approve, and the new PIN can only be set 24 hours after the request. A stolen phone that is still signed in with Google therefore cannot take over the PIN quickly or alone; while a request is open, withdrawals are paused and the customer's phones get a push so the owner can cancel. |
 | A6 | Customer sessions last `CUSTOMER_SESSION_MINUTES` (default 43200 = 30 days); staff tokens keep `SANCTUM_EXPIRATION` (480). |
 | A7 | Firebase revocation and disabled status are checked (one Admin API call) on every login, activation and PIN setup, not on every banking request; banking requests rely on the Sanctum token, which deactivation deletes. |
 
@@ -108,7 +108,9 @@ All responses are JSON. Customer-auth refusals have the shape
 | `POST`, `DELETE /api/customer/push-tokens` | customer | Register / remove the phone's FCM token (§12) |
 | `POST /api/admin/customers` | admin | `email` required; **no `pin`** (sending one is a 422) |
 | `PUT\|PATCH /api/admin/customers/{id}` | admin | `email` while pending; **no `pin`** |
-| `POST /api/admin/customers/{id}/pin-reset` | admin | Remove the PIN and its lock |
+| `POST /api/admin/customers/{id}/pin-reset` | admin | Remove the PIN and its lock (and cancel an open reset request) |
+| `GET /api/customer/pin-reset-request`, `POST /api/customer/pin-reset-requests`, `POST .../{id}/cancel`, `POST .../{id}/complete` | customer | Self-service forgotten PIN (API.md, "Forgotten PIN: self-service requests") |
+| `GET /api/pin-reset-requests[/{id}]`, `POST /api/admin/pin-reset-requests/{id}/approve\|reject` | admin (supervisor read) | Review and decide |
 | `POST /api/admin/customers/{id}/deactivate` | admin | Close the account, revoke sessions, disable the Firebase user |
 | `GET /api/customers` | admin, supervisor | Filter `activation=pending\|activated` |
 

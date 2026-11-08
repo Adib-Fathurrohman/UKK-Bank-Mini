@@ -57,6 +57,23 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Forgotten PIN (self-service request, administrator approval)
+    |--------------------------------------------------------------------------
+    |
+    | A customer who forgot the PIN asks for a reset in the app. An
+    | administrator must approve it, and the new PIN can only be set once
+    | pin_reset_wait_hours have passed since the request. A request that is not
+    | completed within pin_reset_valid_days of being made expires. While a
+    | request is open, withdrawals on the account are paused.
+    |
+    */
+
+    'pin_reset_wait_hours' => (int) env('BANK_PIN_RESET_WAIT_HOURS', 24),
+
+    'pin_reset_valid_days' => (int) env('BANK_PIN_RESET_VALID_DAYS', 7),
+
+    /*
+    |--------------------------------------------------------------------------
     | Withdrawal Authorization (customer approves in the mobile app)
     |--------------------------------------------------------------------------
     |

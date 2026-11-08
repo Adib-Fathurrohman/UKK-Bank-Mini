@@ -8,6 +8,8 @@ use App\Http\Controllers\API\Customer\AccountController as CustomerAccountContro
 use App\Http\Controllers\API\Customer\ActivationController as CustomerActivationController;
 use App\Http\Controllers\API\Customer\AuthController as CustomerAuthController;
 use App\Http\Controllers\API\Customer\PushTokenController as CustomerPushTokenController;
+use App\Http\Controllers\API\Admin\PinResetRequestController;
+use App\Http\Controllers\API\Customer\PinResetController as CustomerPinResetController;
 use App\Http\Controllers\API\Customer\WithdrawalAuthorizationController as CustomerWithdrawalAuthorizationController;
 use App\Http\Controllers\API\LoginController;
 use App\Http\Controllers\API\MajorController;
@@ -74,6 +76,8 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
         Route::match(['put', 'patch'], 'customers/{customer}', [CustomerController::class, 'update']);
         Route::post('customers/{customer}/deactivate', [CustomerController::class, 'deactivate']);
         Route::post('customers/{customer}/pin-reset', [CustomerController::class, 'resetPin']);
+        Route::post('pin-reset-requests/{pinResetRequest}/approve', [PinResetRequestController::class, 'approve']);
+        Route::post('pin-reset-requests/{pinResetRequest}/reject', [PinResetRequestController::class, 'reject']);
         Route::get('customers/{customer}/card', [CustomerController::class, 'card']);
     });
 
@@ -81,6 +85,9 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
     Route::middleware('staff:admin,supervisor')->group(function () {
         Route::get('staff', [StaffController::class, 'index']);
         Route::get('staff/{staff}', [StaffController::class, 'show'])->whereNumber('staff');
+
+        Route::get('pin-reset-requests', [PinResetRequestController::class, 'index']);
+        Route::get('pin-reset-requests/{pinResetRequest}', [PinResetRequestController::class, 'show']);
 
         Route::get('customers', [CustomerController::class, 'index']);
         Route::get('customers/{customer}', [CustomerController::class, 'show'])->withTrashed();
@@ -158,6 +165,14 @@ Route::middleware(['auth:sanctum', 'customer'])->prefix('customer')->group(funct
     Route::get('card', [CustomerAccountController::class, 'card']);
     Route::post('pin/setup', [CustomerAccountController::class, 'setUpPin'])->middleware('throttle:customer-unlock');
     Route::post('pin', [CustomerAccountController::class, 'changePin']);
+
+    // Forgotten PIN: ask (fresh Firebase sign-in), wait for an administrator, set the new PIN.
+    Route::get('pin-reset-request', [CustomerPinResetController::class, 'show']);
+    Route::middleware('throttle:customer-unlock')->group(function () {
+        Route::post('pin-reset-requests', [CustomerPinResetController::class, 'store']);
+        Route::post('pin-reset-requests/{pinResetRequest}/complete', [CustomerPinResetController::class, 'complete']);
+    });
+    Route::post('pin-reset-requests/{pinResetRequest}/cancel', [CustomerPinResetController::class, 'cancel']);
     Route::get('transactions', [CustomerAccountController::class, 'transactions']);
     Route::get('statement/export', [CustomerAccountController::class, 'statement']);
     Route::get('transactions/{transaction}', [CustomerAccountController::class, 'transaction'])->whereNumber('transaction');
