@@ -256,6 +256,29 @@
         "404 already closed"
       ]
     },
+    "Admin\\CustomerController@import": {
+      "purpose": "Bulk-create customer accounts with initial balance and optional transaction history from a spreadsheet (.xlsx, .csv).",
+      "request": {
+        "body": {
+          "file": {
+            "type": "file",
+            "required": true,
+            "rules": "xlsx | csv | txt, max 5120 KB, max 1000 rows. Columns: NIS, Nama, Email (optional), Kelas, Jurusan, Rombel, Saldo (optional), No Rekening (optional)"
+          },
+          "transactions_file": {
+            "type": "file",
+            "required": false,
+            "rules": "xlsx | csv | txt, max 5120 KB, max 10000 rows (or sheet Transaksi in file). Columns: NIS, Tanggal, Jenis, Nominal, Keterangan"
+          }
+        },
+        "content_type": "multipart/form-data"
+      },
+      "response": "201 {message:'Data nasabah berhasil diimpor.', data:{import_id:int, customers_created:int, transactions_created:int, customers_without_email:int, customers:[Customer]}}",
+      "errors": [
+        "422 validation / spreadsheet row errors (all or nothing)"
+      ],
+      "notes": "Accounts without an email stay pending until updated. Unexplained balance becomes an opening deposit with note 'Saldo awal dari pembukuan lama'. Transactions are attached to a customer_imports record (daily_report_id null, cannot be corrected)."
+    },
     "SettingsController@update": {
       "purpose": "Change global settings (partial).",
       "request": {

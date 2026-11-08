@@ -1,7 +1,7 @@
 {
   "name": "E-Teller Bank Mini API",
   "source_of_truth": "Laravel backend implementation (routes, form requests, controllers, services, resources). This file is a generated index; see docs/API.md for examples.",
-  "generated_from_commit": "278ac17",
+  "generated_from_commit": "34db092-dirty",
   "base_url": "{APP_URL}/api (UNKNOWN for deployments; local default http://localhost:8000/api)",
   "conventions": {
     "headers": {
@@ -126,7 +126,7 @@
       "ios"
     ]
   },
-  "route_count": 74,
+  "route_count": 75,
   "endpoints": [
     {
       "method": "POST",
@@ -177,6 +177,36 @@
         "422 validation"
       ],
       "notes": "account_number, account_status and balance in the body are ignored. Format {MAJOR CODE}-{SCHOOL YEAR}-{SERIAL}, e.g. RPL-2026-001. Sending pin is a 422: the customer creates the PIN in the app after activation."
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/customers/import",
+      "auth": "bearer",
+      "actor": "staff",
+      "roles": [
+        "admin"
+      ],
+      "purpose": "Bulk-create customer accounts with initial balance and optional transaction history from a spreadsheet (.xlsx, .csv).",
+      "request": {
+        "body": {
+          "file": {
+            "type": "file",
+            "required": true,
+            "rules": "xlsx | csv | txt, max 5120 KB, max 1000 rows. Columns: NIS, Nama, Email (optional), Kelas, Jurusan, Rombel, Saldo (optional), No Rekening (optional)"
+          },
+          "transactions_file": {
+            "type": "file",
+            "required": false,
+            "rules": "xlsx | csv | txt, max 5120 KB, max 10000 rows (or sheet Transaksi in file). Columns: NIS, Tanggal, Jenis, Nominal, Keterangan"
+          }
+        },
+        "content_type": "multipart/form-data"
+      },
+      "response": "201 {message:'Data nasabah berhasil diimpor.', data:{import_id:int, customers_created:int, transactions_created:int, customers_without_email:int, customers:[Customer]}}",
+      "errors": [
+        "422 validation / spreadsheet row errors (all or nothing)"
+      ],
+      "notes": "Accounts without an email stay pending until updated. Unexplained balance becomes an opening deposit with note 'Saldo awal dari pembukuan lama'. Transactions are attached to a customer_imports record (daily_report_id null, cannot be corrected)."
     },
     {
       "method": [
