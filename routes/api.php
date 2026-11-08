@@ -70,6 +70,7 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
         Route::match(['put', 'patch'], 'settings', [SettingsController::class, 'update']);
 
         Route::post('customers', [CustomerController::class, 'store']);
+        Route::post('customers/import', [CustomerController::class, 'import']);
         Route::match(['put', 'patch'], 'customers/{customer}', [CustomerController::class, 'update']);
         Route::post('customers/{customer}/deactivate', [CustomerController::class, 'deactivate']);
         Route::post('customers/{customer}/pin-reset', [CustomerController::class, 'resetPin']);

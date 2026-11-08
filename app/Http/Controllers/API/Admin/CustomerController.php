@@ -8,6 +8,7 @@ use App\Http\Requests\Admin\UpdateCustomerRequest;
 use App\Http\Resources\CustomerCardResource;
 use App\Http\Resources\CustomerResource;
 use App\Models\Customer;
+use App\Services\CustomerImportService;
 use App\Services\CustomerService;
 use App\Services\PdfReportService;
 use App\Services\PinService;
@@ -23,9 +24,7 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class CustomerController extends Controller
 {
-    public function __construct(private CustomerService $customers)
-    {
-    }
+    public function __construct(private CustomerService $customers) {}
 
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -49,6 +48,12 @@ class CustomerController extends Controller
                 'activated' => $query->whereNotNull('activated_at'),
                 default => $query,
             })
+            // Imported accounts without an email cannot be activated until one is added.
+            ->when($request->input('email'), fn ($query, $email) => match ($email) {
+                'missing' => $query->whereNull('email'),
+                'present' => $query->whereNotNull('email'),
+                default => $query,
+            })
             ->orderBy('full_name')
             ->paginate($this->perPage($request));
 
@@ -65,6 +70,34 @@ class CustomerController extends Controller
         $customer = $this->customers->create($request->validated());
 
         return new CustomerResource($customer->load('major'));
+    }
+
+    /**
+     * Bring existing savers over from the old bookkeeping: customers with their
+     * balance and, optionally, their transaction history (a "Transaksi" sheet
+     * in the workbook or a second file). All or nothing.
+     */
+    public function import(Request $request, CustomerImportService $importer): JsonResponse
+    {
+        $request->validate([
+            'file' => ['required', 'file', 'max:5120', 'mimes:xlsx,csv,txt'],
+            'transactions_file' => ['nullable', 'file', 'max:5120', 'mimes:xlsx,csv,txt'],
+        ]);
+
+        $result = $importer->import($request->file('file'), $request->file('transactions_file'), $request->user());
+        $customers = $result['customers']->each->load('major');
+
+        return response()->json([
+            'message' => 'Data nasabah berhasil diimpor.',
+            'data' => [
+                'import_id' => $result['import']->id,
+                'customers_created' => $result['import']->customer_count,
+                'transactions_created' => $result['import']->transaction_count,
+                // These stay pending until an email is added (PATCH /admin/customers/{id}).
+                'customers_without_email' => $customers->whereNull('email')->count(),
+                'customers' => CustomerResource::collection($customers)->resolve($request),
+            ],
+        ], 201);
     }
 
     public function show(Customer $customer): CustomerResource

@@ -17,6 +17,7 @@ $endpoints = [
     'read settings' => ['GET', '/api/settings', ['admin', 'supervisor', 'teller']],
     'change settings' => ['PATCH', '/api/admin/settings', ['admin']],
     'open account' => ['POST', '/api/admin/customers', ['admin']],
+    'import customers' => ['POST', '/api/admin/customers/import', ['admin']],
     'close account' => ['POST', '/api/admin/customers/1/deactivate', ['admin']],
     'reset customer PIN' => ['POST', '/api/admin/customers/1/pin-reset', ['admin']],
     'print customer card' => ['GET', '/api/admin/customers/1/card', ['admin']],

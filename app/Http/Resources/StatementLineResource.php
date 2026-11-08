@@ -24,7 +24,9 @@ class StatementLineResource extends JsonResource
             'id' => $this->id,
             'type' => $this->type,
             'direction' => $this->type->increasesBalance() ? 'in' : 'out',
-            'description' => $this->type->label(),
+            // Imported history keeps the description from the old bookkeeping.
+            'description' => $this->isImported() && $this->note ? $this->note : $this->type->label(),
+            'imported' => $this->isImported(),
             'amount' => $this->amount,
             'balance_after' => $this->balance_after,
             'created_at' => $this->created_at,

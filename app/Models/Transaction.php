@@ -2,9 +2,9 @@
 
 namespace App\Models;
 
+use App\Enums\TransactionTypes;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use App\Enums\TransactionTypes;
 use LogicException;
 
 class Transaction extends Model
@@ -15,6 +15,7 @@ class Transaction extends Model
         'user_id',
         'customer_id',
         'daily_report_id',
+        'customer_import_id',
         'type',
         'amount',
         'balance_before',
@@ -57,9 +58,25 @@ class Transaction extends Model
         return $this->belongsTo(User::class, 'user_id');
     }
 
+    /**
+     * The teller's shift; null for history brought in by a customer import.
+     */
     public function dailyReport()
     {
         return $this->belongsTo(DailyReport::class);
+    }
+
+    /**
+     * For history from the old bookkeeping: the import that created it.
+     */
+    public function customerImport()
+    {
+        return $this->belongsTo(CustomerImport::class);
+    }
+
+    public function isImported(): bool
+    {
+        return $this->customer_import_id !== null;
     }
 
     /**

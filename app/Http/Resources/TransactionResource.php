@@ -27,7 +27,9 @@ class TransactionResource extends JsonResource
             'balance_before' => $this->balance_before,
             'balance_after' => $this->balance_after,
             'created_at' => $this->created_at,
+            // Null for history brought in by a customer import (no teller shift).
             'daily_report_id' => $this->daily_report_id,
+            'imported' => $this->isImported(),
             'corrects_transaction_id' => $this->corrects_transaction_id,
             'note' => $this->note,
             'corrected_by' => $this->whenLoaded('correction', fn () => $this->correction ? [
