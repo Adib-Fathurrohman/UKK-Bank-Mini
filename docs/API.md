@@ -599,7 +599,7 @@ one in the app (`POST /customer/pin/setup`). **200**
 
 #### Forgotten PIN: self-service requests
 
-**Forgotten PIN, self-service (v0.1.1).** Two safeguards: an administrator must approve, and the
+**Forgotten PIN, self-service (v0.2.1).** Two safeguards: an administrator must approve, and the
 new PIN can only be set 24 hours after the request (`BANK_PIN_RESET_WAIT_HOURS`; a request
 unused after `BANK_PIN_RESET_VALID_DAYS`, default 7, expires). Statuses: `pending` →
 `approved` → `completed`; also `rejected`, `cancelled`, `expired`. One open request per customer.
