@@ -29,3 +29,6 @@ Thumbs.db
 # Firebase service account keys (server-side secret, never commit)
 *firebase-adminsdk*.json
 firebase-credentials.json
+
+# Release artifacts (deploy/build-release.sh)
+/dist

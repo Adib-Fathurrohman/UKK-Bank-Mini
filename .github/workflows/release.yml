@@ -1,0 +1,61 @@
+# Publishes a GitHub Release when a version tag (v1.2.3) is pushed: runs the
+# tests, builds the production artifact with deploy/build-release.sh and attaches
+# the tarball, its SHA-256 checksum and the manifest to the release.
+# The VPS deploys exactly that artifact (docs/DEPLOY.md).
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: write
+
+env:
+  # The locked dependencies need PHP 8.4.1+ (Symfony 8). Keep in line with the VPS.
+  PHP_VERSION: '8.4'
+  PHP_EXTENSIONS: mbstring, intl, bcmath, gd, zip, pdo_mysql, pdo_sqlite, sodium, curl, fileinfo
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: ${{ env.PHP_EXTENSIONS }}
+          coverage: none
+
+      - run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      - run: php artisan test
+      - run: python3 tools/build_api_summary.py --check
+
+      - name: Build the artifact
+        run: |
+          rm .env
+          deploy/build-release.sh "${GITHUB_REF_NAME#v}"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          name="rumput-bank-mini-api-v${version}"
+          checksum="$(cut -d' ' -f1 "dist/${name}.tar.gz.sha256")"
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/${name}.tar.gz" "dist/${name}.tar.gz.sha256" "dist/${name}.manifest.json" \
+            --verify-tag \
+            --title "Rumput Bank Mini API ${GITHUB_REF_NAME}" \
+            --notes "Commit \`${GITHUB_SHA}\`
+          SHA-256 of \`${name}.tar.gz\`: \`${checksum}\`
+
+          Production build (Composer \`--no-dev\`, no \`.env\`, no credentials). Deploy it as described in docs/DEPLOY.md."
