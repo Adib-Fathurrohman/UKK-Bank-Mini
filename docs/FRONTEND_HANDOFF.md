@@ -829,6 +829,14 @@ confirmation: accounts are closed, cannot be undone) → `POST /admin/graduation
 (`GET /graduations/{id}/slips/{customer_id}`). On `409 graduation_selection_changed` reload the
 preview. History: `GET /graduations`, detail `GET /graduations/{id}` (admin, supervisor).
 
+**Kenaikan kelas (admin).** Page "Kenaikan Kelas", used right after the graduation of XII:
+`GET /admin/class-promotions/preview` → table (current class → `next_class`) with a checkbox per
+row "Tinggal kelas"; show `summary`. If `can_run` is false, explain why (`open_xii_count` > 0:
+"Proses kelulusan kelas XII terlebih dahulu"; `already_done`). Confirm →
+`POST /admin/class-promotions {customer_ids: all preview ids, retained_customer_ids: ticked ids,
+note}` → result with counts. On `409 promotion_selection_changed` reload the preview. History
+`GET /class-promotions[/{id}]` (admin, supervisor).
+
 **Staff email and password.**
 - Staff form (admin): optional `email`; show `email_verified` ("Belum diverifikasi").
 - Profile page (every role): set own email (`PUT /staff/email {email, current_password}`),

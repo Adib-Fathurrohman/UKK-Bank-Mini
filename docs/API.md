@@ -1168,6 +1168,25 @@ Also `GET /graduations` (list) and `GET /graduations/{id}` (detail), admin and s
 Graduation payouts cannot be corrected at a counter. Statements describe them as
 "Penarikan kelulusan (rekening ditutup)".
 
+### Kenaikan kelas (class promotion), v0.3.0
+
+**Admin.** Once a year, **after** graduating class XII: every open account moves up one class,
+X → XI and XI → XII, except students who stay (tinggal kelas). Only `class` changes; account
+numbers, balances and history stay.
+
+1. `GET /admin/class-promotions/preview` → `{data: [CustomerSummary + next_class], summary:
+   {school_year, x_count, xi_count, open_xii_count, already_done, can_run}}`. `school_year` is the
+   year the students move into (a run in 2027 is for 2027/2028).
+2. `POST /admin/class-promotions {customer_ids: [all ids from the preview], retained_customer_ids?:
+   [...], note?}` → `201 {data: ClassPromotion + items[{customer_id, account_number, full_name,
+   from_class, to_class, retained}]}`. All or nothing.
+
+Refusals: `409 promotion_xii_not_empty {open_xii_count}` (graduate XII first, otherwise last
+year's XII and the promoted XI would mix), `409 promotion_already_done` (once per school year),
+`409 promotion_selection_changed {missing_customer_ids, unexpected_customer_ids}` (reload the
+preview), `422 promotion_empty`. History: `GET /class-promotions`, `GET /class-promotions/{id}`
+(admin, supervisor).
+
 ### Supervisor: daily reports
 
 Reports are reviewed one at a time (no bulk approval).

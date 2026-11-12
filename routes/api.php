@@ -8,6 +8,7 @@ use App\Http\Controllers\API\Customer\AccountController as CustomerAccountContro
 use App\Http\Controllers\API\Customer\ActivationController as CustomerActivationController;
 use App\Http\Controllers\API\Customer\AuthController as CustomerAuthController;
 use App\Http\Controllers\API\Customer\PushTokenController as CustomerPushTokenController;
+use App\Http\Controllers\API\Admin\ClassPromotionController;
 use App\Http\Controllers\API\Admin\GraduationController;
 use App\Http\Controllers\API\Staff\AccountController as StaffAccountController;
 use App\Http\Controllers\API\Staff\PasswordResetController as StaffPasswordResetController;
@@ -102,6 +103,10 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
         // Graduation (kelulusan): pay out and close a graduating class.
         Route::get('graduations/preview', [GraduationController::class, 'preview']);
         Route::post('graduations', [GraduationController::class, 'store']);
+
+        // Kenaikan kelas (after graduating XII): X -> XI, XI -> XII.
+        Route::get('class-promotions/preview', [ClassPromotionController::class, 'preview']);
+        Route::post('class-promotions', [ClassPromotionController::class, 'store']);
         Route::post('pin-reset-requests/{pinResetRequest}/reject', [PinResetRequestController::class, 'reject']);
         Route::get('customers/{customer}/card', [CustomerController::class, 'card']);
     });
@@ -111,6 +116,8 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
         Route::get('staff', [StaffController::class, 'index']);
         Route::get('staff/{staff}', [StaffController::class, 'show'])->whereNumber('staff');
 
+        Route::get('class-promotions', [ClassPromotionController::class, 'index']);
+        Route::get('class-promotions/{classPromotion}', [ClassPromotionController::class, 'show']);
         Route::get('graduations', [GraduationController::class, 'index']);
         Route::get('graduations/{graduation}', [GraduationController::class, 'show']);
         Route::get('graduations/{graduation}/slips', [GraduationController::class, 'slips']);

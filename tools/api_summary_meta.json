@@ -2068,6 +2068,59 @@
       "errors": [
         "403 invalid or expired signature"
       ]
+    },
+    "Admin\\ClassPromotionController@preview": {
+      "purpose": "Kenaikan kelas preview: every open X and XI account with next_class, and whether the run is possible (class XII graduated, not yet run for the school year the students move into). Changes nothing.",
+      "response": "200 {data: [CustomerSummary + next_class], summary: {school_year, x_count, xi_count, open_xii_count, already_done, can_run}}",
+      "errors": []
+    },
+    "Admin\\ClassPromotionController@store": {
+      "purpose": "Kenaikan kelas: X -> XI and XI -> XII for every confirmed account except the retained ones (tinggal kelas). Only `class` changes. Once per school year, all or nothing; class XII must have no open accounts (graduate it first).",
+      "request": {
+        "body": {
+          "customer_ids": {
+            "type": "array",
+            "required": true,
+            "rules": "exactly the ids from the preview (max 5000)"
+          },
+          "retained_customer_ids": {
+            "type": "array",
+            "required": false,
+            "rules": "subset of customer_ids: students who stay in their class"
+          },
+          "note": {
+            "type": "string",
+            "required": false,
+            "rules": "max 255"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 {data: ClassPromotion {id (ULID), school_year ('2027/2028'), promoted_count, retained_count, note, executed_by{id,full_name}, created_at, items: [{customer_id, account_number, full_name, from_class, to_class, retained}]}}",
+      "errors": [
+        "409 promotion_xii_not_empty {open_xii_count}",
+        "409 promotion_already_done",
+        "409 promotion_selection_changed {missing_customer_ids, unexpected_customer_ids}",
+        "422 promotion_empty",
+        "422 validation"
+      ]
+    },
+    "Admin\\ClassPromotionController@index": {
+      "purpose": "Kenaikan kelas runs, newest first, paginated.",
+      "response": "200 paginated {data: [ClassPromotion {id (ULID), school_year ('2027/2028'), promoted_count, retained_count, note, executed_by{id,full_name}, created_at}], links, meta}",
+      "errors": []
+    },
+    "Admin\\ClassPromotionController@show": {
+      "purpose": "One kenaikan kelas run with every account's move.",
+      "request": {
+        "path_params": {
+          "classPromotion": "ULID"
+        }
+      },
+      "response": "200 {data: ClassPromotion {id (ULID), school_year ('2027/2028'), promoted_count, retained_count, note, executed_by{id,full_name}, created_at, items: [...]}}",
+      "errors": [
+        "404"
+      ]
     }
   }
 }
