@@ -806,6 +806,42 @@ last customer to log in gets the pushes.
 /api/customer/withdrawal-authorizations` every 3–5 s while the approvals screen is open,
 exactly as before.
 
+### 15.12 New in v0.3.0 (staff web app)
+
+**Cash per denomination (teller).** Shifts opened from v0.3.0 track the drawer note by note
+(`data.cash_tracked: true`). Show the drawer from `GET /teller/shift` (`drawer`).
+- Deposit form: amount + a denomination grid "uang diterima" that must add up exactly to the
+  amount (no change); send it as `denominations`. Disable submit until it matches.
+- Withdrawal (terminal and completing an app-approved request): a grid "uang dibayarkan", each
+  quantity capped by the drawer; send `denominations`. If omitted the server picks notes, but
+  the teller should enter what was actually handed over.
+- Errors: `422 cash_breakdown_mismatch`; `422 drawer_insufficient` with `shortages`
+  (`{denomination: {requested, available}}`): highlight those rows.
+- Close shift: prefill nothing; after `422` show `denominations` (expected / counted /
+  difference per note). `difference: 0` with denominations = right total, wrong notes.
+- Receipts and the shift's transaction list can show `cash`.
+
+**Graduation (admin, "Kelulusan").** Wizard: choose class (major, group optional) →
+`GET /admin/graduations/preview` table with each `payout` and the totals → confirm (strong
+confirmation: accounts are closed, cannot be undone) → `POST /admin/graduations` with
+`customer_ids` from the preview → result page with a **"Cetak semua bukti"** button
+(`GET /graduations/{id}/slips`, one page per student) and per-row reprint
+(`GET /graduations/{id}/slips/{customer_id}`). On `409 graduation_selection_changed` reload the
+preview. History: `GET /graduations`, detail `GET /graduations/{id}` (admin, supervisor).
+
+**Staff email and password.**
+- Staff form (admin): optional `email`; show `email_verified` ("Belum diverifikasi").
+- Profile page (every role): set own email (`PUT /staff/email {email, current_password}`),
+  "Kirim ulang verifikasi" (`POST /staff/email/verification-notification`), change password
+  (`POST /staff/password {current_password, password, password_confirmation}`).
+- Login page: link "Lupa password?" → form with email → `POST /staff/password/forgot` → show the
+  `message` (always the same). Read `?email_verified=1|0` and show "Email terverifikasi" /
+  "Tautan verifikasi tidak valid".
+- New route **`/reset-password`** (under the app's base path, so
+  `https://bank.rumput.tech/api/reset-password?token=…&email=…`): new password + confirmation →
+  `POST /staff/password/reset {email, token, password, password_confirmation}` → on `200` go to
+  login; on `422 password_reset_invalid` offer "Minta tautan baru".
+
 ## 16. Pagination, filtering, sorting
 
 - Paginated endpoints: `GET /staff`, `/customers`, `/teller/transactions`,

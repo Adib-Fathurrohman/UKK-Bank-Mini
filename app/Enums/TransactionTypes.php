@@ -19,6 +19,16 @@ enum TransactionTypes: string
         return in_array($this, [self::DEPOSIT, self::WITHDRAWAL_CORRECTION], true);
     }
 
+    /**
+     * Whether the teller's drawer receives cash (true) or pays it out (false).
+     * Same direction as the balance: a deposit brings notes in, a withdrawal
+     * takes them out, and a correction moves them back.
+     */
+    public function addsCash(): bool
+    {
+        return $this->increasesBalance();
+    }
+
     public function isCorrection(): bool
     {
         return in_array($this, [self::DEPOSIT_CORRECTION, self::WITHDRAWAL_CORRECTION], true);

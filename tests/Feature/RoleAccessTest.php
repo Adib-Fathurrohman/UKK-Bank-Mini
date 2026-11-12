@@ -21,6 +21,12 @@ $endpoints = [
     'close account' => ['POST', '/api/admin/customers/1/deactivate', ['admin']],
     'reset customer PIN' => ['POST', '/api/admin/customers/1/pin-reset', ['admin']],
     'read PIN reset requests' => ['GET', '/api/pin-reset-requests', ['admin', 'supervisor']],
+    'set own email' => ['PUT', '/api/staff/email', ['admin', 'supervisor', 'teller']],
+    'change own password' => ['POST', '/api/staff/password', ['admin', 'supervisor', 'teller']],
+    'preview graduation' => ['GET', '/api/admin/graduations/preview', ['admin']],
+    'run graduation' => ['POST', '/api/admin/graduations', ['admin']],
+    'read graduations' => ['GET', '/api/graduations', ['admin', 'supervisor']],
+    'print graduation slips' => ['GET', '/api/graduations/x/slips', ['admin', 'supervisor']],
     'approve PIN reset request' => ['POST', '/api/admin/pin-reset-requests/x/approve', ['admin']],
     'reject PIN reset request' => ['POST', '/api/admin/pin-reset-requests/x/reject', ['admin']],
     'print customer card' => ['GET', '/api/admin/customers/1/card', ['admin']],
@@ -87,9 +93,15 @@ test('each endpoint is reachable only by its allowed actors', function (string $
     }
 })->with($endpoints)->with(['admin', 'supervisor', 'teller', 'customer', 'guest']);
 
-test('every API route except login and activation requires a Sanctum token and an actor check', function () {
+test('every API route except login, activation and staff password reset requires a Sanctum token and an actor check', function () {
     // Public on purpose: the credentials (password, or Firebase ID token with the NIS) are the proof.
-    $public = ['api/customer/activation'];
+    $public = [
+        'api/customer/activation',
+        // Staff forgot/reset password and the signed email verification link.
+        'api/staff/password/forgot',
+        'api/staff/password/reset',
+        'api/staff/email/verify/{user}/{hash}',
+    ];
 
     $routes = collect(Route::getRoutes()->getRoutes())
         ->filter(fn ($route) => str_starts_with($route->uri(), 'api/')

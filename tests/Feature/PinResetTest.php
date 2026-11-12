@@ -364,7 +364,7 @@ test("other customers' requests do not exist", function () {
 describe('withdrawals while a reset request is open', function () {
     beforeEach(function () {
         $this->teller = User::factory()->teller()->create();
-        openShiftFor($this->teller);
+        openShiftFor($this->teller, cashFloat()); // change float, so withdrawals can be paid out
         allowTerminalWithdrawals('both');
     });
 
@@ -407,7 +407,7 @@ describe('withdrawals while a reset request is open', function () {
 
         // A new day, a new shift.
         $teller = User::factory()->teller()->create();
-        openShiftFor($teller);
+        openShiftFor($teller, cashFloat()); // change float, so withdrawals can be paid out
         Sanctum::actingAs($teller);
         $this->postJson('/api/teller/withdrawals', ['account_number' => 'RPL-2026-001', 'amount' => 20000, 'pin' => '123456'])->assertUnprocessable();
         $this->postJson('/api/teller/withdrawals', ['account_number' => 'RPL-2026-001', 'amount' => 20000, 'pin' => '654321'])->assertCreated();

@@ -8,6 +8,8 @@ use App\Http\Requests\Admin\StoreStaffRequest;
 use App\Http\Requests\Admin\UpdateStaffRequest;
 use App\Http\Resources\StaffResource;
 use App\Models\User;
+use App\Services\StaffAccountService;
+use Illuminate\Support\Arr;
 use App\Services\StaffImportService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
@@ -42,9 +44,16 @@ class StaffController extends Controller
         return StaffResource::collection($staff);
     }
 
-    public function store(StoreStaffRequest $request): StaffResource
+    /**
+     * An email given here gets a verification link; the staff member must open it
+     * before the email can be used to reset the password.
+     */
+    public function store(StoreStaffRequest $request, StaffAccountService $accounts): StaffResource
     {
-        return new StaffResource(User::create($request->validated()));
+        $data = $request->validated();
+        $staff = User::create(Arr::except($data, 'email'));
+
+        return new StaffResource($accounts->assignEmail($staff, $data['email'] ?? null));
     }
 
     public function show(User $staff): StaffResource
@@ -52,11 +61,16 @@ class StaffController extends Controller
         return new StaffResource($staff);
     }
 
-    public function update(UpdateStaffRequest $request, User $staff): StaffResource
+    public function update(UpdateStaffRequest $request, User $staff, StaffAccountService $accounts): StaffResource
     {
         $this->ensureManageable($staff);
 
-        $staff->update($request->validated());
+        $data = $request->validated();
+        $staff->update(Arr::except($data, 'email'));
+
+        if (array_key_exists('email', $data)) {
+            $accounts->assignEmail($staff, $data['email']);
+        }
 
         return new StaffResource($staff);
     }

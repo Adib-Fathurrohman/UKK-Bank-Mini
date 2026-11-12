@@ -11,7 +11,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
-#[Fillable(['username', 'full_name', 'class', 'phone', 'password', 'role', 'is_active'])]
+#[Fillable(['username', 'email', 'full_name', 'class', 'phone', 'password', 'role', 'is_active'])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable
 {
@@ -34,6 +34,7 @@ class User extends Authenticatable
     {
         return [
             'password' => 'hashed',
+            'email_verified_at' => 'datetime',
             'role' => UserRoles::class,
             'is_active' => 'boolean',
         ];
@@ -42,6 +43,14 @@ class User extends Authenticatable
     /**
      * Transactions executed by this user as teller.
      */
+    /**
+     * Password reset is only possible to a verified email.
+     */
+    public function hasVerifiedEmail(): bool
+    {
+        return $this->email !== null && $this->email_verified_at !== null;
+    }
+
     public function transactions()
     {
         return $this->hasMany(Transaction::class);

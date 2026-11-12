@@ -19,6 +19,7 @@ class UpdateStaffRequest extends FormRequest
     {
         return [
             'username' => ['sometimes', 'string', 'alpha_dash', 'max:50', Rule::unique('users', 'username')->ignore($this->route('staff'))],
+            'email' => ['sometimes', 'nullable', 'email:rfc', 'max:255', Rule::unique('users', 'email')->ignore($this->route('staff'))],
             'full_name' => ['sometimes', 'string', 'max:255'],
             'password' => ['sometimes', 'string', 'min:8'],
             'role' => ['sometimes', Rule::enum(UserRoles::class)->only([UserRoles::TELLER, UserRoles::SUPERVISOR])],

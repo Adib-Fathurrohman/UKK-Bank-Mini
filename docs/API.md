@@ -509,6 +509,25 @@ message names the spreadsheet row:
 
 ---
 
+#### Staff email and password (v0.3.0)
+
+Staff (all roles) may have an **email**, optional and unique. It must be **verified** before it
+can be used: setting or changing it (`POST/PATCH /admin/staff` with `email`, or the staff member's
+own `PUT /staff/email {email, current_password}`) sends a signed link valid 24 hours; opening it
+verifies the address and redirects to `{STAFF_WEB_URL}/login?email_verified=1` (`0` for a link of
+an older address). `POST /staff/email/verification-notification` sends it again. Staff objects
+include `email` and `email_verified`.
+
+| Endpoint | Auth | Body | Result |
+| --- | --- | --- | --- |
+| `POST /staff/password/forgot` | public | `{email}` | `202`, same message for any email. Only an active staff member with that **verified** email gets a link `{STAFF_WEB_URL}/reset-password?token=…&email=…` (valid 60 minutes, one use, at most one per minute) |
+| `POST /staff/password/reset` | public | `{email, token, password, password_confirmation}` | `200`; every session revoked, a notice email sent. `422 password_reset_invalid` for an unknown/unverified email or a wrong, used or expired token |
+| `POST /staff/password` | staff | `{current_password, password, password_confirmation}` | `200`; other sessions revoked. `422 current_password_invalid` |
+
+Passwords: at least 8 characters. These endpoints are limited to 5 requests a minute per email and
+IP. Emails are sent through SMTP (Brevo in production); a mail failure is logged and never changes
+the answer.
+
 ### Settings
 
 Global configuration set by the administrator (soal 1a).
@@ -873,6 +892,29 @@ Own transactions only (**404** otherwise).
 
 ---
 
+#### Notes and coins per transaction (drawer tracking, v0.3.0)
+
+Every shift opened from v0.3.0 on has `cash_tracked: true`: the drawer is tracked per
+denomination. **Drawer = opening count + notes received - notes paid out.**
+
+| Transaction | Optional `denominations` body field | Rule | Omitted |
+| --- | --- | --- | --- |
+| Deposit (`POST /teller/deposits`) | notes received | add up exactly to `amount` (no change) | fewest notes |
+| Withdrawal (`POST /teller/withdrawals`, `POST /teller/withdrawal-authorizations/{id}/complete`) | notes paid out | add up to `amount`, each at most what the drawer holds | the largest notes the drawer can combine |
+| Correction (`POST /teller/transactions/{id}/correct`) | notes moved back | as above, by direction | the original transaction's notes |
+
+`denominations` is `{"20000": 1, "5000": 3}` (keys: 100000 … 100). The staff web app should always
+send what was actually counted. Refusals (422, nothing saved): `cash_breakdown_mismatch` (notes do
+not add up) and `drawer_insufficient` (`shortages: {"10000": {"requested": 2, "available": 1}}`, or
+no combination of the drawer's notes makes the amount). Transactions return
+`cash: [{denomination, quantity}]`.
+
+`GET /teller/shift` returns `drawer: [{denomination, quantity, subtotal}]`, what the drawer
+should hold now. **Closing** (`POST /teller/shift/close`) must match it per denomination, not
+only in total; a mismatch returns `denominations: {"50000": {"expected": 0, "counted": 1,
+"difference": 1}, …}` (with `difference: 0` when the total is right but the notes are not).
+Shifts opened before v0.3.0 (`cash_tracked: false`) keep the total-only check and record no notes.
+
 ### Teller: corrections
 
 #### `POST /teller/transactions/{id}/correct`
@@ -1099,6 +1141,32 @@ request no longer pending (`status` included), or account suspended. Staff token
 `pending` → `rejected`. **200** with the request. **422** if it is no longer pending.
 
 ---
+
+### Graduation (kelulusan), v0.3.0
+
+**Admin.** Pays out a graduating class in full and closes the accounts. The cash comes from the
+main vault (not a teller's drawer), so the withdrawals belong to the graduation batch
+(`daily_report_id: null`, `graduation_id` set), like imported history. Full balance: the minimum
+balance no longer applies once the account closes. No PIN: an administrator's action, recorded
+with who ran it.
+
+1. `GET /admin/graduations/preview?class=XII[&major_id=&group=]` → `{data: [CustomerSummary +
+   payout], summary: {customer_count, paid_count, total_amount}}`. Changes nothing.
+2. `POST /admin/graduations {class, major_id?, group?, customer_ids: [ids from the preview], note?}`
+   → `201 {data: Graduation + customers[{id, account_number, nis, full_name, class, major_code,
+   group, amount, transaction_id}]}`. All or nothing, in one database transaction: one withdrawal
+   per account with money (journaled like any withdrawal), every account closed (`inactive`, soft
+   deleted, sessions revoked, Firebase user disabled, open withdrawal requests and PIN resets
+   cancelled). If the class changed since the preview: `409 graduation_selection_changed
+   {missing_customer_ids, unexpected_customer_ids}` and nothing happens. A closed account is never
+   in another batch, so nobody is paid twice (`422 graduation_empty` on a repeat).
+3. Print: `GET /graduations/{id}/slips` (one PDF, A5, **one page per student who received
+   money**, with amount in words and signature lines) or `GET /graduations/{id}/slips/{customer}`
+   (one student). Admin and supervisor.
+
+Also `GET /graduations` (list) and `GET /graduations/{id}` (detail), admin and supervisor.
+Graduation payouts cannot be corrected at a counter. Statements describe them as
+"Penarikan kelulusan (rekening ditutup)".
 
 ### Supervisor: daily reports
 

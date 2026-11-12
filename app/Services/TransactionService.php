@@ -36,19 +36,26 @@ class TransactionService
         private SettingsService $settings,
         private PinService $pins,
         private PinResetService $pinResets,
+        private CashDrawerService $drawer,
     ) {
     }
 
-    public function deposit(Customer $customer, int $amount, User $teller, ?string $idempotencyKey = null): Transaction
+    /**
+     * @param  array<int|string, int>|null  $notes  notes received (denomination => quantity); null: fewest notes
+     */
+    public function deposit(Customer $customer, int $amount, User $teller, ?string $idempotencyKey = null, ?array $notes = null): Transaction
     {
         return $this->replay($teller, $idempotencyKey, TransactionTypes::DEPOSIT, $customer, $amount)
-            ?? $this->record(TransactionTypes::DEPOSIT, $customer, $amount, $teller, idempotencyKey: $idempotencyKey);
+            ?? $this->record(TransactionTypes::DEPOSIT, $customer, $amount, $teller, idempotencyKey: $idempotencyKey, notes: $notes);
     }
 
     /**
      * The customer authorizes a withdrawal by typing their PIN at the counter (soal 1d).
      */
-    public function withdraw(Customer $customer, int $amount, User $teller, string $pin, ?string $idempotencyKey = null): Transaction
+    /**
+     * @param  array<int|string, int>|null  $notes  notes paid out; null: the largest notes the drawer can combine
+     */
+    public function withdraw(Customer $customer, int $amount, User $teller, string $pin, ?string $idempotencyKey = null, ?array $notes = null): Transaction
     {
         if ($existing = $this->replay($teller, $idempotencyKey, TransactionTypes::WITHDRAWAL, $customer, $amount)) {
             return $existing;
@@ -57,7 +64,7 @@ class TransactionService
         $this->pinResets->ensureWithdrawalsAllowed($customer);
         $this->pins->verify($customer, $pin);
 
-        return $this->record(TransactionTypes::WITHDRAWAL, $customer, $amount, $teller, idempotencyKey: $idempotencyKey);
+        return $this->record(TransactionTypes::WITHDRAWAL, $customer, $amount, $teller, idempotencyKey: $idempotencyKey, notes: $notes);
     }
 
     /**
@@ -68,7 +75,7 @@ class TransactionService
      * withdrawal, so it produces at most one withdrawal; a repeated call returns
      * that same withdrawal.
      */
-    public function completeAuthorizedWithdrawal(WithdrawalAuthorization $authorization, User $teller): Transaction
+    public function completeAuthorizedWithdrawal(WithdrawalAuthorization $authorization, User $teller, ?array $notes = null): Transaction
     {
         $authorization = $authorization->fresh();
 
@@ -82,6 +89,7 @@ class TransactionService
             $authorization->amount,
             $teller,
             authorization: $authorization,
+            notes: $notes,
         );
     }
 
@@ -93,13 +101,16 @@ class TransactionService
      * teller's own transaction, in the shift that is still running, once, and
      * only with a supervisor's authorization.
      */
-    public function correct(Transaction $original, User $teller, User $supervisor, string $reason, ?string $idempotencyKey = null): Transaction
+    public function correct(Transaction $original, User $teller, User $supervisor, string $reason, ?string $idempotencyKey = null, ?array $notes = null): Transaction
     {
         $type = $original->type->correctionType()
             ?? throw new CorrectionNotAllowedException('Transaksi koreksi tidak dapat dikoreksi lagi.');
 
+        // By default the same notes move back (the deposit's notes are returned).
+        $notes ??= $original->cash()->pluck('quantity', 'denomination')->all() ?: null;
+
         return $this->replay($teller, $idempotencyKey, $type, $original->customer, $original->amount)
-            ?? $this->record($type, $original->customer, $original->amount, $teller, $original, $supervisor, $reason, $idempotencyKey);
+            ?? $this->record($type, $original->customer, $original->amount, $teller, $original, $supervisor, $reason, $idempotencyKey, notes: $notes);
     }
 
     private function record(
@@ -112,13 +123,14 @@ class TransactionService
         ?string $note = null,
         ?string $idempotencyKey = null,
         ?WithdrawalAuthorization $authorization = null,
+        ?array $notes = null,
     ): Transaction {
         if ($amount <= 0) {
             throw new InvalidArgumentException('Nominal transaksi harus lebih dari nol.');
         }
 
         try {
-            return DB::transaction(function () use ($type, $customer, $amount, $teller, $original, $supervisor, $note, $idempotencyKey, $authorization) {
+            return DB::transaction(function () use ($type, $customer, $amount, $teller, $original, $supervisor, $note, $idempotencyKey, $authorization, $notes) {
                 // Locks are always taken teller, shift, (original,) then customer, to avoid
                 // deadlocks. The teller and shift locks keep the shift from closing halfway
                 // through and serialize the teller's requests for the idempotency check.
@@ -154,6 +166,9 @@ class TransactionService
 
                 $this->ensureBalanceAllows($type, $balanceBefore, $balanceAfter);
 
+                // The notes that move: they must add up to the amount, and a payout must be in the drawer.
+                $cash = $this->drawer->notesFor($shift, $type, $amount, $notes);
+
                 $customer->update(['balance' => $balanceAfter]);
 
                 $transaction = $customer->transactions()->create([
@@ -168,6 +183,8 @@ class TransactionService
                     'note' => $note,
                     'idempotency_key' => $idempotencyKey,
                 ]);
+
+                $this->drawer->record($transaction->id, $cash);
 
                 if ($authorization) {
                     // Compare-and-set: exactly one request can move it from approved to consumed.

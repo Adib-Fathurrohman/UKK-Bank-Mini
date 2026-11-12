@@ -30,7 +30,15 @@ class TransactionResource extends JsonResource
             // Null for history brought in by a customer import (no teller shift).
             'daily_report_id' => $this->daily_report_id,
             'imported' => $this->isImported(),
+            // Null unless this is a graduation payout (kelulusan): then the batch's public id.
+            'graduation_id' => $this->graduation_id ? $this->graduation?->public_id : null,
             'corrects_transaction_id' => $this->corrects_transaction_id,
+            // Notes into (deposit, withdrawal correction) or out of (withdrawal, deposit correction)
+            // the teller's drawer; empty for shifts before per-note tracking and imports.
+            'cash' => $this->whenLoaded('cash', fn () => $this->cash->map(fn ($note) => [
+                'denomination' => $note->denomination,
+                'quantity' => $note->quantity,
+            ])->values()->all()),
             'note' => $this->note,
             'corrected_by' => $this->whenLoaded('correction', fn () => $this->correction ? [
                 'id' => $this->correction->id,

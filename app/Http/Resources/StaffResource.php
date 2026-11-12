@@ -20,6 +20,9 @@ class StaffResource extends JsonResource
         return [
             'id' => $this->id,
             'username' => $this->username,
+            'email' => $this->email,
+            // Password reset by email works only once the address is verified.
+            'email_verified' => $this->hasVerifiedEmail(),
             'full_name' => $this->full_name,
             'class' => $this->class,
             'phone' => $this->phone,

@@ -25,7 +25,8 @@ use Illuminate\Support\Facades\DB;
  * 2. Work:  every deposit/withdrawal is recorded in the open shift.
  * 3. Close: count the cash again (uang fisik). It must equal
  *           saldo awal + total setoran - total penarikan, otherwise the
- *           report stays locked.
+ *           report stays locked. For a tracked shift (cash_tracked) every
+ *           denomination must also match the drawer (CashDrawerService).
  * 4. Review: the supervisor approves (cash moves to the vault), puts the
  *           report on hold, or rejects it (the shift reopens for correction).
  *
@@ -33,6 +34,10 @@ use Illuminate\Support\Facades\DB;
  */
 class DailyReportService
 {
+    public function __construct(private CashDrawerService $drawer)
+    {
+    }
+
     /**
      * The shift the teller is still working in (open or rejected), if any.
      * There is never more than one.
@@ -112,6 +117,8 @@ class DailyReportService
                 'report_date' => today()->toDateString(),
                 'status' => ReportStatus::OPEN,
                 'opening_balance' => $this->total($counts),
+                // Shifts opened from now on track the drawer per denomination.
+                'cash_tracked' => true,
                 'opened_at' => now(),
             ]);
 
@@ -140,7 +147,13 @@ class DailyReportService
             $physical = $this->total($counts);
 
             if ($physical !== $summary['system_balance']) {
-                throw new CashMismatchException($summary['system_balance'], $physical);
+                throw new CashMismatchException($summary['system_balance'], $physical, $shift->cash_tracked ? $this->drawer->differences($counts, $this->drawer->contents($shift)) : []);
+            }
+
+            // The right total is not enough: every denomination must match the drawer
+            // (opening count + notes received - notes paid out).
+            if ($shift->cash_tracked && ($differences = $this->drawer->differences($counts, $this->drawer->contents($shift)))) {
+                throw new CashMismatchException($summary['system_balance'], $physical, $differences);
             }
 
             $shift->fill([

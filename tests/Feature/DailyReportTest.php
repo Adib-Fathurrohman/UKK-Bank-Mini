@@ -335,7 +335,8 @@ test('supervisor lists reports and sees counts and transactions behind one', fun
         ->assertJsonPath('data.opening_balance', 20000)
         ->assertJsonPath('data.physical_balance', 50000)
         ->assertJsonCount(1, 'data.opening_counts')
-        ->assertJsonCount(1, 'data.closing_counts')
+        // The drawer holds 2 x Rp20.000 + 1 x Rp10.000 (opening note + the deposit's notes).
+        ->assertJsonCount(2, 'data.closing_counts')
         ->assertJsonCount(1, 'transactions');
 });
 

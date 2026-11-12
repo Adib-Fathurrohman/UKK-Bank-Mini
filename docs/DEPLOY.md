@@ -144,6 +144,10 @@ local development:
 | `LOG_STACK` / `LOG_LEVEL` | `daily` / `info` | |
 | `SESSION_SECURE_COOKIE` etc. | `true`, `SESSION_ENCRYPT=true` | The API is stateless; sessions are not used for login |
 | `CORS_ALLOWED_ORIGINS` | `https://bank.rumput.tech` | Browser origins that may call the API (comma-separated) |
+| `STAFF_WEB_URL` | `https://bank.rumput.tech/api` | Staff web app with its base path; links in staff emails (`/reset-password`, `/login`) open it |
+| `MAIL_MAILER`, `MAIL_HOST`, `MAIL_PORT` | `smtp`, `smtp-relay.brevo.com`, `587` | Staff verification and password-reset emails (Brevo SMTP) |
+| `MAIL_USERNAME`, `MAIL_PASSWORD` | Brevo SMTP login and SMTP key | Secret: only in `shared/.env` |
+| `MAIL_FROM_ADDRESS`, `MAIL_FROM_NAME` | a sender verified in Brevo, `"Bank Mini"` | Must be a verified sender, or Brevo refuses the mail |
 | `TRUSTED_PROXIES` | empty | Nothing sits in front of Nginx. Set to the proxy address (or `*`) if a CDN/tunnel is added, so the login rate limits see real client IPs |
 | `SANCTUM_STATEFUL_DOMAINS` | empty | Cookie-based SPA login is not used |
 | `FIREBASE_PROJECT_ID` | `bank-mini-rumput` | |

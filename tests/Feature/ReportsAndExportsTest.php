@@ -166,7 +166,7 @@ test('a customer statement has the opening balance, every line and the closing b
     $this->transactions->deposit($this->customer, 100000, $this->teller);
     closeShiftFor($this->teller);
     $this->travelTo(Carbon::parse('2026-10-24 09:00:00'));
-    openShiftFor($this->teller);
+    openShiftFor($this->teller, cashFloat());
     $this->transactions->withdraw($this->customer, 30000, $this->teller, '123456');
     $this->transactions->deposit($this->customer, 5000, $this->teller);
 
@@ -206,7 +206,10 @@ test('the annual report covers one school year per account and per product', fun
 
     // During 2026/2027.
     $this->travelTo(Carbon::parse('2026-10-23 09:00:00'));
-    $this->transactions->withdraw($this->customer, 20000, $this->teller, '123456');
+    // A teller whose drawer holds notes to pay the withdrawal with.
+    $octoberTeller = User::factory()->teller()->create();
+    openShiftFor($octoberTeller, cashFloat());
+    $this->transactions->withdraw($this->customer, 20000, $octoberTeller, '123456');
     $deposit = $this->transactions->deposit($this->other, 70000, $this->teller);
     $this->transactions->correct($deposit, $this->teller, $this->supervisor, 'Salah ketik');
     $this->transactions->deposit($this->other, 7000, $this->teller);

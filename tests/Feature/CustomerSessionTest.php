@@ -175,7 +175,7 @@ test('withdrawal approval in the app keeps requiring the PIN within a session', 
     allowTerminalWithdrawals('mobile');
     $this->customer->update(['balance' => 100000, 'account_number' => 'RPL-2026-001']);
     $teller = actingAsStaff(UserRoles::TELLER);
-    openShiftFor($teller);
+    openShiftFor($teller, cashFloat()); // change float, so withdrawals can be paid out
     $id = $this->postJson('/api/teller/withdrawal-authorizations', ['account_number' => 'RPL-2026-001', 'amount' => 20000])
         ->assertCreated()->json('data.id');
 

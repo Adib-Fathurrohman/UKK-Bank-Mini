@@ -21,12 +21,22 @@ class CorrectionRequest extends FormRequest
      *
      * @return array<string, mixed>
      */
+    /**
+     * @return array<int, int>|null
+     */
+    public function notes(): ?array
+    {
+        return CashCountRequest::notesFrom($this);
+    }
+
     public function rules(): array
     {
         return [
             'reason' => ['required', 'string', 'max:255'],
             'supervisor_username' => ['required', 'string'],
             'supervisor_password' => ['required', 'string'],
+            // Notes moved back; default: the same notes as the original transaction.
+            ...CashCountRequest::noteRules(),
         ];
     }
 

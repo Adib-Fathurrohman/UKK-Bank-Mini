@@ -68,6 +68,22 @@ return [
     |
     */
 
+    /*
+    |--------------------------------------------------------------------------
+    | Staff Email (verification and password reset)
+    |--------------------------------------------------------------------------
+    |
+    | Links in staff emails open the staff web app at STAFF_WEB_URL (including
+    | its base path, e.g. https://bank.rumput.tech/api): /reset-password and
+    | /login. Verification links are valid for staff_email_verify_hours; reset
+    | links for auth.passwords.users.expire minutes (60).
+    |
+    */
+
+    'staff_web_url' => rtrim((string) env('STAFF_WEB_URL', 'http://localhost:5173'), '/'),
+
+    'staff_email_verify_hours' => (int) env('BANK_STAFF_EMAIL_VERIFY_HOURS', 24),
+
     'pin_reset_wait_hours' => (int) env('BANK_PIN_RESET_WAIT_HOURS', 24),
 
     'pin_reset_valid_days' => (int) env('BANK_PIN_RESET_VALID_DAYS', 7),

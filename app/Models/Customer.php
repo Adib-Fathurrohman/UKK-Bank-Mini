@@ -39,6 +39,7 @@ class Customer extends Authenticatable
         'pin_failed_attempts',
         'pin_locked_until',
         'balance',
+        'graduation_id',
     ];
 
     protected $hidden = [
@@ -92,5 +93,13 @@ class Customer extends Authenticatable
     public function pushTokens()
     {
         return $this->hasMany(CustomerPushToken::class);
+    }
+
+    /**
+     * The graduation batch that paid out and closed this account, if any.
+     */
+    public function graduation()
+    {
+        return $this->belongsTo(Graduation::class);
     }
 }

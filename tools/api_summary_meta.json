@@ -339,11 +339,16 @@
             "type": "string",
             "required": false,
             "rules": "nullable, max 20, regex ^[0-9+\\-\\s]+$"
+          },
+          "email": {
+            "type": "string",
+            "required": false,
+            "rules": "nullable, email, max 255, unique; a new address gets a verification link and starts unverified"
           }
         },
         "content_type": "application/json"
       },
-      "response": "201 {data: Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}}",
+      "response": "201 {data: Staff {id, username, email, email_verified, full_name, class, phone, role, is_active, created_at, updated_at}}",
       "errors": [
         "422 validation"
       ]
@@ -368,7 +373,7 @@
         },
         "content_type": "multipart/form-data"
       },
-      "response": "201 {data:{created:int, users:[Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at} + generated_password|null]}}",
+      "response": "201 {data:{created:int, users:[Staff {id, username, email, email_verified, full_name, class, phone, role, is_active, created_at, updated_at} + generated_password|null]}}",
       "errors": [
         "422 errors keyed rows.{index}.{field} (index 0 = sheet row 2); nothing is created"
       ]
@@ -423,11 +428,16 @@
             "type": "string",
             "required": false,
             "rules": "nullable, max 20, regex ^[0-9+\\-\\s]+$"
+          },
+          "email": {
+            "type": "string",
+            "required": false,
+            "rules": "nullable, email, max 255, unique; a new address gets a verification link and starts unverified"
           }
         },
         "content_type": "application/json"
       },
-      "response": "200 {data: Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}}",
+      "response": "200 {data: Staff {id, username, email, email_verified, full_name, class, phone, role, is_active, created_at, updated_at}}",
       "errors": [
         "403 'Akun administrator tidak dapat diubah melalui API.' for admin targets",
         "404",
@@ -441,7 +451,7 @@
           "staff": "integer id"
         }
       },
-      "response": "200 {data: Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}}",
+      "response": "200 {data: Staff {id, username, email, email_verified, full_name, class, phone, role, is_active, created_at, updated_at}}",
       "errors": [
         "403 admin target",
         "404"
@@ -454,7 +464,7 @@
           "staff": "integer id"
         }
       },
-      "response": "200 {data: Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}}",
+      "response": "200 {data: Staff {id, username, email, email_verified, full_name, class, phone, role, is_active, created_at, updated_at}}",
       "errors": [
         "403 admin target",
         "404"
@@ -803,7 +813,7 @@
           "per_page": "integer, clamped 1-100"
         }
       },
-      "response": "200 paginated {data:[Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}], links, meta}; default per_page 15"
+      "response": "200 paginated {data:[Staff {id, username, email, email_verified, full_name, class, phone, role, is_active, created_at, updated_at}], links, meta}; default per_page 15"
     },
     "Staff\\AuthController@login": {
       "purpose": "Staff-only login (alias of POST /api/login).",
@@ -836,7 +846,7 @@
     "Staff\\AuthController@me": {
       "purpose": "Current staff user.",
       "request": {},
-      "response": "200 {data: Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}}"
+      "response": "200 {data: Staff {id, username, email, email_verified, full_name, class, phone, role, is_active, created_at, updated_at}}"
     },
     "Admin\\StaffController@show": {
       "purpose": "One staff member.",
@@ -845,7 +855,7 @@
           "staff": "integer id"
         }
       },
-      "response": "200 {data: Staff {id, username, full_name, class, phone, role, is_active, created_at, updated_at}}",
+      "response": "200 {data: Staff {id, username, email, email_verified, full_name, class, phone, role, is_active, created_at, updated_at}}",
       "errors": [
         "404"
       ]
@@ -1064,27 +1074,37 @@
             "type": "integer",
             "required": true,
             "rules": "integer 1-100000000 (backend does not require multiples of 100; frontend should)"
+          },
+          "denominations": {
+            "type": "object",
+            "required": false,
+            "rules": "keys only [100000, 50000, 20000, 10000, 5000, 2000, 1000, 500, 200, 100]; values integer 0-100000; must add up to amount; notes received (exactly the amount, no change). Omitted: the fewest notes",
+            "example": {
+              "20000": 1,
+              "5000": 3
+            }
           }
         },
         "content_type": "application/json"
       },
-      "response": "201 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?}}; 200 on idempotent replay",
+      "response": "201 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, cash: [{denomination, quantity}], graduation_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?}}; 200 on idempotent replay",
       "errors": [
         "422 validation",
         "422 no shift / shift closed / earlier shift still open",
         "422 account not active",
-        "422 idempotency key conflict"
+        "422 idempotency key conflict",
+        "422 cash_breakdown_mismatch (notes do not add up to the amount)"
       ]
     },
     "Teller\\ShiftController@show": {
       "purpose": "The teller's active shift (open or rejected) with live totals and its transactions.",
       "ownership": "scoped to the authenticated user",
       "request": {},
-      "response": "200 {data: DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?}, can_transact: bool, transactions:[Transaction]} or {data:null, can_transact:false, closed_today:bool}",
+      "response": "200 {data: DailyReport {id, report_date, status, opening_balance, cash_tracked, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?}, can_transact: bool, drawer: [{denomination, quantity, subtotal}] | null (null for a shift opened before per-note tracking), transactions:[Transaction]} or {data:null, can_transact:false, closed_today:bool}",
       "notes": "For a rejected shift, physical_balance, difference and closing_counts are stale values from the rejected close."
     },
     "Teller\\ShiftController@close": {
-      "purpose": "Close the active shift; physical cash must equal opening + net deposits - net withdrawals.",
+      "purpose": "Close the active shift; physical cash must equal opening + net deposits - net withdrawals, and for a tracked shift (cash_tracked) every denomination must equal the drawer.",
       "ownership": "scoped to the authenticated user",
       "request": {
         "body": {
@@ -1102,7 +1122,7 @@
       },
       "response": "200 {data: DailyReport {id, report_date, status, opening_balance, opened_at, transaction_count, total_deposit, total_withdrawal, system_balance, physical_balance, difference, submitted_at, reviewed_at, supervisor_note, teller?, supervisor?, opening_counts?, closing_counts?, cash_transfer?} status submitted, difference 0, closing_counts}",
       "errors": [
-        "422 cash mismatch with system_balance, physical_balance, difference (nothing saved)",
+        "422 cash mismatch {message, system_balance, physical_balance, difference, denominations: {denomination: {expected, counted, difference}}} (nothing saved; difference 0 with denominations = right total, wrong notes)",
         "422 no active shift"
       ]
     },
@@ -1171,11 +1191,20 @@
             "type": "string",
             "required": true,
             "rules": "that supervisor's password"
+          },
+          "denominations": {
+            "type": "object",
+            "required": false,
+            "rules": "keys only [100000, 50000, 20000, 10000, 5000, 2000, 1000, 500, 200, 100]; values integer 0-100000; must add up to amount; notes moved back. Omitted: the original transaction's notes",
+            "example": {
+              "20000": 1,
+              "5000": 3
+            }
           }
         },
         "content_type": "application/json"
       },
-      "response": "201 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?} type deposit_correction|withdrawal_correction with corrects_transaction_id, authorized_by}; 200 on replay",
+      "response": "201 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, cash: [{denomination, quantity}], graduation_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?} type deposit_correction|withdrawal_correction with corrects_transaction_id, authorized_by}; 200 on replay",
       "errors": [
         "422 errors.supervisor_password",
         "422 already corrected",
@@ -1183,7 +1212,9 @@
         "422 wrong/closed shift",
         "422 deposit correction would make balance negative",
         "404 not own",
-        "429 more than 10 per minute"
+        "429 more than 10 per minute",
+        "422 cash_breakdown_mismatch",
+        "422 drawer_insufficient"
       ]
     },
     "Teller\\TransactionController@receipt": {
@@ -1228,11 +1259,20 @@
             "type": "string",
             "required": true,
             "rules": "exactly 6 digits; checked before shift/status/balance; 3 wrong in a row lock the PIN for 15 minutes (shared with login and mobile approval)"
+          },
+          "denominations": {
+            "type": "object",
+            "required": false,
+            "rules": "keys only [100000, 50000, 20000, 10000, 5000, 2000, 1000, 500, 200, 100]; values integer 0-100000; must add up to amount; notes paid out, each at most what the drawer holds. Omitted: the largest notes the drawer can combine",
+            "example": {
+              "20000": 1,
+              "5000": 3
+            }
           }
         },
         "content_type": "application/json"
       },
-      "response": "201 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?}}; 200 on idempotent replay (PIN not re-checked)",
+      "response": "201 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, cash: [{denomination, quantity}], graduation_id, note, corrected_by?, authorized_by?, customer{id,account_number,full_name}, teller?, journals?}}; 200 on idempotent replay (PIN not re-checked)",
       "errors": [
         "422 withdrawal_verification is mobile: 'Penarikan harus disetujui nasabah melalui aplikasi. ...'",
         "422 wrong PIN {message, remaining_attempts, pin_locked_until}",
@@ -1240,7 +1280,9 @@
         "422 insufficient balance (minimum balance)",
         "422 deposit errors",
         "422 {message, code:'pin_not_set'} the customer has not created a PIN yet",
-        "422 pin_reset_in_progress (a forgotten-PIN request is open on the account)"
+        "422 pin_reset_in_progress (a forgotten-PIN request is open on the account)",
+        "422 cash_breakdown_mismatch",
+        "422 drawer_insufficient {message, code, shortages?: {denomination: {requested, available}}}"
       ]
     },
     "Teller\\WithdrawalAuthorizationController@store": {
@@ -1333,16 +1375,30 @@
       "request": {
         "path_params": {
           "withdrawalAuthorization": "ULID (data.id of the request)"
-        }
+        },
+        "body": {
+          "denominations": {
+            "type": "object",
+            "required": false,
+            "rules": "keys only [100000, 50000, 20000, 10000, 5000, 2000, 1000, 500, 200, 100]; values integer 0-100000; must add up to amount; notes paid out, each at most what the drawer holds. Omitted: the largest notes the drawer can combine",
+            "example": {
+              "20000": 1,
+              "5000": 3
+            }
+          }
+        },
+        "content_type": "application/json"
       },
-      "response": "201 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, note, corrected_by?, authorized_by?, withdrawal_authorization?, customer{id,account_number,full_name}, teller?, journals?}} with withdrawal_authorization {id, method:'mobile', approved_at}; 200 with the same transaction if called again",
+      "response": "201 {data: Transaction {id, type, type_label, amount, amount_in_words, balance_before, balance_after, created_at, daily_report_id, corrects_transaction_id, cash: [{denomination, quantity}], graduation_id, note, corrected_by?, authorized_by?, withdrawal_authorization?, customer{id,account_number,full_name}, teller?, journals?}} with withdrawal_authorization {id, method:'mobile', approved_at}; 200 with the same transaction if called again",
       "errors": [
         "404",
         "422 not usable in the current status {message, status} (e.g. still pending)",
         "422 approval expired",
         "422 request belongs to another shift / no open shift",
         "422 insufficient balance (minimum balance)",
-        "422 account not active"
+        "422 account not active",
+        "422 cash_breakdown_mismatch",
+        "422 drawer_insufficient {message, code, shortages?: {denomination: {requested, available}}}"
       ]
     },
     "Customer\\WithdrawalAuthorizationController@index": {
@@ -1750,6 +1806,267 @@
         "404",
         "409 pin_reset_not_usable {message, code, status}",
         "422 validation"
+      ]
+    },
+    "Admin\\GraduationController@preview": {
+      "purpose": "Graduation preview: the open accounts of the class (optional major/group) and each full payout (minimum balance included). Changes nothing.",
+      "request": {
+        "query": {
+          "class": {
+            "type": "string",
+            "required": true,
+            "rules": "X|XI|XII"
+          },
+          "major_id": {
+            "type": "integer",
+            "required": false,
+            "rules": "nullable, exists"
+          },
+          "group": {
+            "type": "string",
+            "required": false,
+            "rules": "nullable, 1-4"
+          }
+        }
+      },
+      "response": "200 {data: [CustomerSummary + payout], summary: {customer_count, paid_count, total_amount}}",
+      "errors": [
+        "422 validation"
+      ]
+    },
+    "Admin\\GraduationController@store": {
+      "purpose": "Graduation (kelulusan): pay out every confirmed account in full from the main vault (one withdrawal each, no PIN, no shift) and close all of them (inactive, sessions revoked, Firebase disabled, open withdrawal requests and PIN resets cancelled). All or nothing.",
+      "request": {
+        "body": {
+          "class": {
+            "type": "string",
+            "required": true,
+            "rules": "X|XI|XII"
+          },
+          "major_id": {
+            "type": "integer",
+            "required": false,
+            "rules": "nullable, exists"
+          },
+          "group": {
+            "type": "string",
+            "required": false,
+            "rules": "nullable, 1-4"
+          },
+          "customer_ids": {
+            "type": "array",
+            "required": true,
+            "rules": "exactly the ids from the preview (min 1, max 2000)"
+          },
+          "note": {
+            "type": "string",
+            "required": false,
+            "rules": "max 255"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "201 {data: Graduation {id (ULID), label, class, major{id,code,major_name}|null, group, customer_count, paid_count, total_amount, total_amount_in_words, note, executed_by{id,full_name}, created_at, customers: [{id, account_number, nis, full_name, class, major_code, group, amount, transaction_id}]}}",
+      "errors": [
+        "409 graduation_selection_changed {missing_customer_ids, unexpected_customer_ids} (nothing done)",
+        "422 graduation_empty",
+        "422 validation"
+      ]
+    },
+    "Admin\\GraduationController@index": {
+      "purpose": "Graduation batches, newest first, paginated.",
+      "request": {
+        "query": {
+          "page": {
+            "type": "integer",
+            "required": false,
+            "rules": ""
+          },
+          "per_page": {
+            "type": "integer",
+            "required": false,
+            "rules": "default 15"
+          }
+        }
+      },
+      "response": "200 paginated {data: [Graduation {id (ULID), label, class, major{id,code,major_name}|null, group, customer_count, paid_count, total_amount, total_amount_in_words, note, executed_by{id,full_name}, created_at}], links, meta}",
+      "errors": []
+    },
+    "Admin\\GraduationController@show": {
+      "purpose": "One graduation batch with every closed account and its payout.",
+      "request": {
+        "path_params": {
+          "graduation": "ULID"
+        }
+      },
+      "response": "200 {data: Graduation {id (ULID), label, class, major{id,code,major_name}|null, group, customer_count, paid_count, total_amount, total_amount_in_words, note, executed_by{id,full_name}, created_at, customers: [...]}}",
+      "errors": [
+        "404"
+      ]
+    },
+    "Admin\\GraduationController@slips": {
+      "purpose": "All withdrawal slips of the batch in one PDF (A5), one page per student who received money, ordered by major, group, name.",
+      "request": {
+        "path_params": {
+          "graduation": "ULID"
+        }
+      },
+      "response": "200 application/pdf download kelulusan-{label}-{Ymd}.pdf",
+      "errors": [
+        "404"
+      ]
+    },
+    "Admin\\GraduationController@slip": {
+      "purpose": "One student's withdrawal slip (reprint).",
+      "request": {
+        "path_params": {
+          "graduation": "ULID",
+          "customer": "integer customer id"
+        }
+      },
+      "response": "200 application/pdf download kelulusan-{label}-{Ymd}-{account_number}.pdf",
+      "errors": [
+        "404 (not in the batch, or nothing paid out)"
+      ]
+    },
+    "Staff\\AccountController@updateEmail": {
+      "purpose": "Set, change or remove (null) the own email; needs the current password. A new address gets a verification link and is unverified until opened.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "body": {
+          "email": {
+            "type": "string|null",
+            "required": true,
+            "rules": "present, nullable, email, max 255, unique"
+          },
+          "current_password": {
+            "type": "string",
+            "required": true,
+            "rules": "the current password"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {data: Staff}",
+      "errors": [
+        "422 validation (current_password wrong)"
+      ]
+    },
+    "Staff\\AccountController@resendVerification": {
+      "purpose": "Send the verification link again.",
+      "ownership": "scoped to the authenticated user",
+      "response": "202 {message}",
+      "errors": [
+        "422 email_missing",
+        "409 email_already_verified",
+        "429"
+      ]
+    },
+    "Staff\\AccountController@changePassword": {
+      "purpose": "Change the own password with the current one; other sessions are revoked, the current one stays; email notice if verified.",
+      "ownership": "scoped to the authenticated user",
+      "request": {
+        "body": {
+          "current_password": {
+            "type": "string",
+            "required": true,
+            "rules": ""
+          },
+          "password": {
+            "type": "string",
+            "required": true,
+            "rules": "min 8, max 255, confirmed"
+          },
+          "password_confirmation": {
+            "type": "string",
+            "required": true,
+            "rules": "must equal password"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {message}",
+      "errors": [
+        "422 current_password_invalid",
+        "422 validation",
+        "429"
+      ]
+    },
+    "Staff\\PasswordResetController@forgot": {
+      "purpose": "Forgot password: emails a one-time reset link (60 min) to an active staff member's verified email. Same answer for any email; at most one link per minute.",
+      "request": {
+        "body": {
+          "email": {
+            "type": "string",
+            "required": true,
+            "rules": "email, max 255"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "202 {message}",
+      "errors": [
+        "422 validation",
+        "429 (5/min per email+IP)"
+      ]
+    },
+    "Staff\\PasswordResetController@reset": {
+      "purpose": "Set a new password with the token from the reset link ({STAFF_WEB_URL}/reset-password?token=&email=). Revokes every session.",
+      "request": {
+        "body": {
+          "email": {
+            "type": "string",
+            "required": true,
+            "rules": "email"
+          },
+          "token": {
+            "type": "string",
+            "required": true,
+            "rules": "from the link"
+          },
+          "password": {
+            "type": "string",
+            "required": true,
+            "rules": "min 8, max 255, confirmed"
+          },
+          "password_confirmation": {
+            "type": "string",
+            "required": true,
+            "rules": "must equal password"
+          }
+        },
+        "content_type": "application/json"
+      },
+      "response": "200 {message}",
+      "errors": [
+        "422 password_reset_invalid (unknown/unverified email, wrong, used or expired token)",
+        "422 validation",
+        "429"
+      ]
+    },
+    "Staff\\PasswordResetController@verifyEmail": {
+      "purpose": "Opened from the verification email (signed link, 24 h). Verifies the address and redirects to {STAFF_WEB_URL}/login?email_verified=1 (or 0 for a link of an older address).",
+      "request": {
+        "path_params": {
+          "user": "integer",
+          "hash": "sha1 of the address"
+        },
+        "query": {
+          "expires": {
+            "type": "integer",
+            "required": true,
+            "rules": "signed"
+          },
+          "signature": {
+            "type": "string",
+            "required": true,
+            "rules": "signed"
+          }
+        }
+      },
+      "response": "302 to the staff web app",
+      "errors": [
+        "403 invalid or expired signature"
       ]
     }
   }

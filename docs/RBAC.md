@@ -173,6 +173,10 @@ All 74 API routes (`php artisan route:list --path=api`). Prefix `/api`.
 | POST | `/admin/customers/{customer}/deactivate` | `staff:admin` |
 | POST | `/admin/customers/{customer}/pin-reset` | `staff:admin` |
 | GET | `/pin-reset-requests`, `/pin-reset-requests/{request}` | `staff:admin,supervisor` |
+| GET · POST | `/admin/graduations/preview` · `/admin/graduations` | `staff:admin` |
+| GET | `/graduations`, `/graduations/{graduation}`, `/graduations/{graduation}/slips[/{customer}]` | `staff:admin,supervisor` |
+| PUT · POST | `/staff/email` · `/staff/email/verification-notification`, `/staff/password` | `auth:sanctum`, `staff` (every role, own account) |
+| POST · GET | `/staff/password/forgot`, `/staff/password/reset` · `/staff/email/verify/{user}/{hash}` (signed) | public, `throttle:staff-password` |
 | POST | `/admin/pin-reset-requests/{request}/approve`, `/reject` | `staff:admin` |
 | GET | `/admin/customers/{customer}/card` | `staff:admin` |
 | GET | `/audit/transactions`, `/audit/transactions/export`, `/audit/transactions/{transaction}` | `staff:admin,supervisor` |

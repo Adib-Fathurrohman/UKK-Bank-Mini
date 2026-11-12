@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API\Teller;
 use App\Enums\WithdrawalAuthorizationStatus;
 use App\Exceptions\WithdrawalVerificationModeException;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Teller\CompleteWithdrawalAuthorizationRequest;
 use App\Http\Requests\Teller\StoreWithdrawalAuthorizationRequest;
 use App\Http\Resources\TransactionResource;
 use App\Http\Resources\WithdrawalAuthorizationResource;
@@ -84,13 +85,13 @@ class WithdrawalAuthorizationController extends Controller
      * Execute the approved withdrawal. Safe to retry: 201 the first time, then
      * 200 with the same transaction.
      */
-    public function complete(Request $request, WithdrawalAuthorization $withdrawalAuthorization, TransactionService $transactions): JsonResponse
+    public function complete(CompleteWithdrawalAuthorizationRequest $request, WithdrawalAuthorization $withdrawalAuthorization, TransactionService $transactions): JsonResponse
     {
         $this->ensureOwn($request, $withdrawalAuthorization);
 
-        $transaction = $transactions->completeAuthorizedWithdrawal($withdrawalAuthorization, $request->user());
+        $transaction = $transactions->completeAuthorizedWithdrawal($withdrawalAuthorization, $request->user(), $request->notes());
 
-        return (new TransactionResource($transaction->load('withdrawalAuthorization')))->response();
+        return (new TransactionResource($transaction->load(['withdrawalAuthorization', 'cash'])))->response();
     }
 
     /**

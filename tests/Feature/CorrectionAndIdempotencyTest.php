@@ -20,7 +20,7 @@ beforeEach(function () {
     $this->supervisor = User::factory()->supervisor()->create(['username' => 'spv', 'password' => 'rahasia123']);
     $this->customer = Customer::factory()->create(['account_number' => 'RPL-2026-001', 'balance' => 100000]);
     $this->transactions = app(TransactionService::class);
-    openShiftFor($this->teller);
+    openShiftFor($this->teller, cashFloat()); // change float, so withdrawals can be paid out
     Sanctum::actingAs($this->teller);
 });
 
@@ -113,7 +113,7 @@ test('a transaction can be corrected only once, and corrections cannot be correc
 
 test('tellers cannot correct each other\'s transactions', function () {
     $other = User::factory()->teller()->create();
-    openShiftFor($other);
+    openShiftFor($other, cashFloat()); // change float, so withdrawals can be paid out
     $deposit = $this->transactions->deposit($this->customer, 50000, $other);
 
     $this->postJson("/api/teller/transactions/{$deposit->id}/correct", correctionBody())->assertNotFound();
@@ -162,10 +162,11 @@ test('shift totals are net of corrections, so the drawer still reconciles', func
     expect($reports->summarize($reports->activeShift($this->teller)))->toMatchArray([
         'transaction_count' => 2,
         'total_deposit' => 0,
-        'system_balance' => 0,
+        'system_balance' => 980000,
     ]);
 
-    $this->postJson('/api/teller/shift/close', ['denominations' => []])->assertOk();
+    // The deposit's notes went back out, so the drawer is the opening float again.
+    $this->postJson('/api/teller/shift/close', ['denominations' => cashFloat()])->assertOk();
 });
 
 test('the customer statement shows the correction', function () {
@@ -221,7 +222,7 @@ test('a key reused for a different transaction is refused', function () {
 
 test('idempotency keys are per teller', function () {
     $other = User::factory()->teller()->create();
-    openShiftFor($other);
+    openShiftFor($other, cashFloat()); // change float, so withdrawals can be paid out
 
     $this->transactions->deposit($this->customer, 25000, $this->teller, 'same-key');
     $this->transactions->deposit($this->customer, 25000, $other, 'same-key');

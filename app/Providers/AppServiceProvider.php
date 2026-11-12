@@ -95,6 +95,9 @@ class AppServiceProvider extends ServiceProvider
 
         // Activation, per IP. Guessing NIS numbers gains nothing: the signed-in
         // verified email must also be the registered one.
+        // Staff forgot/reset password, verification links and password change: per IP and email.
+        RateLimiter::for('staff-password', fn (Request $request) => Limit::perMinute(5)->by(Str::lower((string) $request->input('email')).'|'.$request->ip()));
+
         RateLimiter::for('customer-activation', fn (Request $request) => Limit::perMinute(20)->by($request->ip()));
 
         // Registering and removing push tokens, per customer.

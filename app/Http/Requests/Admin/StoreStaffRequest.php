@@ -17,6 +17,7 @@ class StoreStaffRequest extends FormRequest
     {
         return [
             'username' => ['required', 'string', 'alpha_dash', 'max:50', 'unique:users,username'],
+            'email' => ['nullable', 'email:rfc', 'max:255', 'unique:users,email'],
             'full_name' => ['required', 'string', 'max:255'],
             'password' => ['required', 'string', 'min:8'],
             // Administrators can only create tellers and supervisors (FR-Usr-01).

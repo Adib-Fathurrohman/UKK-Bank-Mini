@@ -25,6 +25,8 @@ class DailyReportResource extends JsonResource
             'report_date' => $this->report_date->toDateString(),
             'status' => $this->status,
             'opening_balance' => $this->opening_balance,
+            // True: the drawer is tracked per denomination and closing must match it per note.
+            'cash_tracked' => $this->cash_tracked,
             'opened_at' => $this->opened_at,
             'transaction_count' => $this->transaction_count,
             'total_deposit' => $this->total_deposit,

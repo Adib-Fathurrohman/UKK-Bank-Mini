@@ -30,7 +30,7 @@ beforeEach(function () {
         'balance' => 100000,
     ]);
     $this->teller = User::factory()->teller()->create();
-    $this->shift = openShiftFor($this->teller);
+    $this->shift = openShiftFor($this->teller, cashFloat()); // change float, so withdrawals can be paid out
     Sanctum::actingAs($this->teller);
 });
 
@@ -383,7 +383,7 @@ test('a customer can have only one open request', function () {
     pendingWithdrawal();
 
     $otherTeller = User::factory()->teller()->create();
-    openShiftFor($otherTeller);
+    openShiftFor($otherTeller, cashFloat()); // change float, so withdrawals can be paid out
     asTeller($otherTeller);
 
     requestWithdrawal()
@@ -447,7 +447,7 @@ test('other tellers cannot see, cancel or complete the request', function () {
     approveAsCustomer($id);
 
     $otherTeller = User::factory()->teller()->create();
-    openShiftFor($otherTeller);
+    openShiftFor($otherTeller, cashFloat()); // change float, so withdrawals can be paid out
     asTeller($otherTeller);
 
     $this->getJson("/api/teller/withdrawal-authorizations/{$id}")->assertNotFound();
@@ -518,7 +518,7 @@ test('the balance is checked again when completing', function () {
     // Another withdrawal at the terminal meanwhile.
     allowTerminalWithdrawals('both');
     $otherTeller = User::factory()->teller()->create();
-    openShiftFor($otherTeller);
+    openShiftFor($otherTeller, cashFloat()); // change float, so withdrawals can be paid out
     asTeller($otherTeller);
     $this->postJson('/api/teller/withdrawals', ['account_number' => 'RPL-2026-001', 'amount' => 50000, 'pin' => '123456'])->assertCreated();
 

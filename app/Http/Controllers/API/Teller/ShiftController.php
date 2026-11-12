@@ -7,6 +7,7 @@ use App\Http\Requests\Teller\CashCountRequest;
 use App\Http\Resources\DailyReportResource;
 use App\Http\Resources\TransactionResource;
 use App\Models\DailyReport;
+use App\Services\CashDrawerService;
 use App\Services\DailyReportService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -25,7 +26,7 @@ class ShiftController extends Controller
      * The active shift (open or rejected) with live totals and its transactions,
      * which doubles as the on-screen closing draft. Null when no shift is running.
      */
-    public function show(Request $request): JsonResponse
+    public function show(Request $request, CashDrawerService $drawerService): JsonResponse
     {
         $teller = $request->user();
         $shift = $this->reports->activeShift($teller);
@@ -40,11 +41,19 @@ class ShiftController extends Controller
 
         $this->reports->withLiveTotals($shift)->load(['openingCounts', 'closingCounts', 'supervisor']);
 
-        $transactions = $shift->transactions()->with('customer')->oldest('id')->get();
+        $transactions = $shift->transactions()->with(['customer', 'cash'])->oldest('id')->get();
+
+        $drawer = $shift->cash_tracked ? $drawerService->contents($shift) : null;
 
         return (new DailyReportResource($shift))
             ->additional([
                 'can_transact' => $shift->report_date->isToday(),
+                // What the drawer should hold now, per denomination (null for an untracked shift).
+                'drawer' => $drawer === null ? null : collect($drawer)->map(fn ($quantity, $denomination) => [
+                    'denomination' => $denomination,
+                    'quantity' => $quantity,
+                    'subtotal' => $denomination * $quantity,
+                ])->values()->all(),
                 'transactions' => TransactionResource::collection($transactions),
             ])
             ->response();

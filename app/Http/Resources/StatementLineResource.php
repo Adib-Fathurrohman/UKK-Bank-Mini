@@ -25,7 +25,11 @@ class StatementLineResource extends JsonResource
             'type' => $this->type,
             'direction' => $this->type->increasesBalance() ? 'in' : 'out',
             // Imported history keeps the description from the old bookkeeping.
-            'description' => $this->isImported() && $this->note ? $this->note : $this->type->label(),
+            'description' => match (true) {
+                $this->isImported() && (bool) $this->note => $this->note,
+                $this->isGraduationPayout() => 'Penarikan kelulusan (rekening ditutup)',
+                default => $this->type->label(),
+            },
             'imported' => $this->isImported(),
             'amount' => $this->amount,
             'balance_after' => $this->balance_after,

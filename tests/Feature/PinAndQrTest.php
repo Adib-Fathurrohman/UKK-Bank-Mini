@@ -18,7 +18,7 @@ beforeEach(function () {
         'balance' => 100000,
     ]);
     $this->teller = User::factory()->teller()->create();
-    openShiftFor($this->teller);
+    openShiftFor($this->teller, cashFloat()); // change float, so withdrawals can be paid out
     Sanctum::actingAs($this->teller);
 });
 

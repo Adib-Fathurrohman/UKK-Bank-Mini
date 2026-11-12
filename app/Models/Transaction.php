@@ -16,6 +16,7 @@ class Transaction extends Model
         'customer_id',
         'daily_report_id',
         'customer_import_id',
+        'graduation_id',
         'type',
         'amount',
         'balance_before',
@@ -74,6 +75,19 @@ class Transaction extends Model
         return $this->belongsTo(CustomerImport::class);
     }
 
+    public function graduation()
+    {
+        return $this->belongsTo(Graduation::class);
+    }
+
+    /**
+     * A graduation payout: the whole balance, paid from the main vault when the account closed.
+     */
+    public function isGraduationPayout(): bool
+    {
+        return $this->graduation_id !== null;
+    }
+
     public function isImported(): bool
     {
         return $this->customer_import_id !== null;
@@ -109,6 +123,14 @@ class Transaction extends Model
     public function withdrawalAuthorization()
     {
         return $this->hasOne(WithdrawalAuthorization::class);
+    }
+
+    /**
+     * Notes and coins this transaction moved into or out of the teller's drawer.
+     */
+    public function cash()
+    {
+        return $this->hasMany(TransactionCash::class)->orderByDesc('denomination');
     }
 
     public function accountingJournals()

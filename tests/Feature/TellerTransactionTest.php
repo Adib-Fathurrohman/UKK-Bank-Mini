@@ -17,7 +17,7 @@ beforeEach(function () {
 function tellerOnShift(): App\Models\User
 {
     $teller = actingAsStaff(UserRoles::TELLER);
-    openShiftFor($teller);
+    openShiftFor($teller, cashFloat()); // change float, so withdrawals can be paid out
 
     return $teller;
 }
@@ -170,7 +170,7 @@ test('teller sees only their own transactions for the requested day', function (
     $this->postJson('/api/teller/deposits', ['account_number' => '1000000001', 'amount' => 10000])->assertCreated();
 
     $otherTeller = App\Models\User::factory()->teller()->create();
-    openShiftFor($otherTeller);
+    openShiftFor($otherTeller, cashFloat()); // change float, so withdrawals can be paid out
     app(App\Services\TransactionService::class)->deposit($this->customer, 5000, $otherTeller);
 
     $this->getJson('/api/teller/transactions')

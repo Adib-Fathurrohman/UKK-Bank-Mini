@@ -71,9 +71,22 @@ function actingAsStaff(UserRoles $role = UserRoles::TELLER, array $attributes = 
 /**
  * Open today's shift for a teller with the given opening cash.
  */
-function openShiftFor(User $teller, int $openingBalance = 0): DailyReport
+function openShiftFor(User $teller, int|array $openingBalance = 0): DailyReport
 {
-    return app(DailyReportService::class)->open($teller, Cash::breakdown($openingBalance));
+    $counts = is_array($openingBalance) ? $openingBalance : Cash::breakdown($openingBalance);
+
+    return app(DailyReportService::class)->open($teller, $counts);
+}
+
+/**
+ * A realistic change float for the drawer (Rp980.000 in mixed notes), so
+ * withdrawals of any usual amount can be paid out: openShiftFor($teller, cashFloat()).
+ *
+ * @return array<int, int>
+ */
+function cashFloat(): array
+{
+    return [100000 => 5, 50000 => 4, 20000 => 5, 10000 => 10, 5000 => 10, 2000 => 10, 1000 => 10];
 }
 
 /**
@@ -82,9 +95,14 @@ function openShiftFor(User $teller, int $openingBalance = 0): DailyReport
 function closeShiftFor(User $teller): DailyReport
 {
     $reports = app(DailyReportService::class);
-    $expected = $reports->summarize($reports->activeShift($teller))['system_balance'];
+    $shift = $reports->activeShift($teller);
 
-    return $reports->close($teller, Cash::breakdown($expected));
+    // Tracked shifts must match the drawer per denomination; older ones only in total.
+    $counts = $shift->cash_tracked
+        ? app(\App\Services\CashDrawerService::class)->contents($shift)
+        : Cash::breakdown($reports->summarize($shift)['system_balance']);
+
+    return $reports->close($teller, $counts);
 }
 
 /**

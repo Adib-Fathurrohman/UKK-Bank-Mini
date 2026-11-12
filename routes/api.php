@@ -8,6 +8,9 @@ use App\Http\Controllers\API\Customer\AccountController as CustomerAccountContro
 use App\Http\Controllers\API\Customer\ActivationController as CustomerActivationController;
 use App\Http\Controllers\API\Customer\AuthController as CustomerAuthController;
 use App\Http\Controllers\API\Customer\PushTokenController as CustomerPushTokenController;
+use App\Http\Controllers\API\Admin\GraduationController;
+use App\Http\Controllers\API\Staff\AccountController as StaffAccountController;
+use App\Http\Controllers\API\Staff\PasswordResetController as StaffPasswordResetController;
 use App\Http\Controllers\API\Admin\PinResetRequestController;
 use App\Http\Controllers\API\Customer\PinResetController as CustomerPinResetController;
 use App\Http\Controllers\API\Customer\WithdrawalAuthorizationController as CustomerWithdrawalAuthorizationController;
@@ -50,6 +53,21 @@ Route::post('customer/activation', CustomerActivationController::class)->middlew
 
 /*
 |--------------------------------------------------------------------------
+| Staff password reset and email verification (public)
+|--------------------------------------------------------------------------
+*/
+
+Route::middleware('throttle:staff-password')->group(function () {
+    Route::post('staff/password/forgot', [StaffPasswordResetController::class, 'forgot']);
+    Route::post('staff/password/reset', [StaffPasswordResetController::class, 'reset']);
+});
+Route::get('staff/email/verify/{user}/{hash}', [StaffPasswordResetController::class, 'verifyEmail'])
+    ->middleware(['signed', 'throttle:staff-password'])
+    ->whereNumber('user')
+    ->name('staff.email.verify');
+
+/*
+|--------------------------------------------------------------------------
 | Staff portal (Administrator, Supervisor, Teller)
 |--------------------------------------------------------------------------
 */
@@ -57,6 +75,9 @@ Route::post('customer/activation', CustomerActivationController::class)->middlew
 Route::middleware(['auth:sanctum', 'staff'])->group(function () {
     Route::get('staff/me', [StaffAuthController::class, 'me']);
     Route::post('staff/logout', [StaffAuthController::class, 'logout']);
+    Route::put('staff/email', [StaffAccountController::class, 'updateEmail']);
+    Route::post('staff/email/verification-notification', [StaffAccountController::class, 'resendVerification'])->middleware('throttle:staff-password');
+    Route::post('staff/password', [StaffAccountController::class, 'changePassword'])->middleware('throttle:staff-password');
     Route::get('majors', [MajorController::class, 'index']);
     Route::get('settings', [SettingsController::class, 'show']);
 
@@ -77,6 +98,10 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
         Route::post('customers/{customer}/deactivate', [CustomerController::class, 'deactivate']);
         Route::post('customers/{customer}/pin-reset', [CustomerController::class, 'resetPin']);
         Route::post('pin-reset-requests/{pinResetRequest}/approve', [PinResetRequestController::class, 'approve']);
+
+        // Graduation (kelulusan): pay out and close a graduating class.
+        Route::get('graduations/preview', [GraduationController::class, 'preview']);
+        Route::post('graduations', [GraduationController::class, 'store']);
         Route::post('pin-reset-requests/{pinResetRequest}/reject', [PinResetRequestController::class, 'reject']);
         Route::get('customers/{customer}/card', [CustomerController::class, 'card']);
     });
@@ -85,6 +110,11 @@ Route::middleware(['auth:sanctum', 'staff'])->group(function () {
     Route::middleware('staff:admin,supervisor')->group(function () {
         Route::get('staff', [StaffController::class, 'index']);
         Route::get('staff/{staff}', [StaffController::class, 'show'])->whereNumber('staff');
+
+        Route::get('graduations', [GraduationController::class, 'index']);
+        Route::get('graduations/{graduation}', [GraduationController::class, 'show']);
+        Route::get('graduations/{graduation}/slips', [GraduationController::class, 'slips']);
+        Route::get('graduations/{graduation}/slips/{customer}', [GraduationController::class, 'slip'])->whereNumber('customer');
 
         Route::get('pin-reset-requests', [PinResetRequestController::class, 'index']);
         Route::get('pin-reset-requests/{pinResetRequest}', [PinResetRequestController::class, 'show']);

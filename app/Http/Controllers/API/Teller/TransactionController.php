@@ -56,6 +56,7 @@ class TransactionController extends Controller
             $request->integer('amount'),
             $request->user(),
             $this->idempotencyKey($request),
+            $request->notes(),
         ));
     }
 
@@ -76,6 +77,7 @@ class TransactionController extends Controller
             $request->user(),
             $request->validated('pin'),
             $this->idempotencyKey($request),
+            $request->notes(),
         ));
     }
 
@@ -93,6 +95,7 @@ class TransactionController extends Controller
             $request->supervisor(),
             $request->validated('reason'),
             $this->idempotencyKey($request),
+            $request->notes(),
         );
 
         return $this->respond($correction->load(['corrects', 'authorizer']));
@@ -133,7 +136,7 @@ class TransactionController extends Controller
      */
     private function respond(Transaction $transaction): JsonResponse
     {
-        $response = (new TransactionResource($transaction))->response();
+        $response = (new TransactionResource($transaction->loadMissing('cash')))->response();
 
         return $transaction->wasRecentlyCreated
             ? $response

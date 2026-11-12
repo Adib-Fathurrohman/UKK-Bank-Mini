@@ -112,7 +112,7 @@ test('without a PIN the app cannot unlock, change the PIN or approve, and nothin
 
 test('the teller cannot withdraw for a customer without a PIN, in any mode', function () {
     $teller = actingAsStaff(UserRoles::TELLER);
-    openShiftFor($teller);
+    openShiftFor($teller, cashFloat()); // change float, so withdrawals can be paid out
     $pending = Customer::factory()->pending()->create(['account_number' => 'RPL-2026-002', 'balance' => 100000]);
 
     $this->getJson('/api/teller/customers/lookup?identifier=RPL-2026-001')->assertJsonPath('data.pin_set', false);
